@@ -56,20 +56,6 @@ def _tail_lines(text: str, max_lines: int = 20) -> str:
     return "\n".join(lines[-max_lines:])
 
 
-def _atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
-    """Lesson from relay.mjs: publish atomically via temp file rename."""
-    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    try:
-        tmp_path.write_text(content, encoding=encoding)
-        os.replace(tmp_path, path)
-    except Exception:
-        if tmp_path.exists():
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
-        raise
-
 
 def _enrich_error(exc: Exception, completed: subprocess.CompletedProcess) -> Exception:
     """Attach agy's exit status + rolling stderr tail to a read/parse error
