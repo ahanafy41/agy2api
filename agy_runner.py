@@ -114,17 +114,6 @@ def _run_agy_once(
     log_fd, log_path = tempfile.mkstemp(prefix="agy2api-", suffix=".log")
     os.close(log_fd)
 
-    # Lesson from relay.mjs: pass the prompt directly via --print=<prompt>.
-    # On Windows, command-line length is capped at ~32KB. Check prompt length
-    # up-front to prevent WinError 206 crashes.
-    if os.name == "nt" and len(prompt) > 30_000:
-        raise ValueError(
-            f"Prompt length ({len(prompt)} chars) exceeds Windows command-line limit (~32KB). "
-            "Please enable stateful mode (AGY2API_STATEFUL=1) to send only incremental turns."
-        )
-
-    # Lesson from relay.mjs: pass --print=<prompt> to bind the value firmly so
-    # prompts starting with dashes/flags are never misparsed.
     command = [
         settings.agy_path,
         f"--print={prompt}",
@@ -145,6 +134,17 @@ def _run_agy_once(
     # Lesson from relay.mjs: reasoning effort passed directly to agy --effort
     if effort:
         command.extend(["--effort", effort])
+
+    # Lesson from relay.mjs: On Windows, CreateProcessW limits lpCommandLine to ~32,767
+    # UTF-16 code units. Check the fully assembled command line to prevent WinError 206.
+    if os.name == "nt":
+        assembled_cmd = subprocess.list2cmdline(command)
+        utf16_len = len(assembled_cmd.encode("utf-16-le")) // 2
+        if utf16_len > 32_000:
+            raise ValueError(
+                f"Command line length ({utf16_len} UTF-16 code units) exceeds Windows limit (~32KB). "
+                "Please enable stateful mode (AGY2API_STATEFUL=1) to send only incremental turns."
+            )
 
     # Windows: suppress the console window that flashes for each agy subprocess.
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
@@ -180,12 +180,17 @@ def _run_agy_once(
                             ["taskkill", "/pid", str(proc.pid), "/t", "/f"],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
+                            timeout=5,
                             check=False,
                         )
                     except Exception:
-                        pass
+                        proc.kill()
                 else:
                     proc.kill()
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
                 raise RuntimeError(f"agy timed out after {settings.request_timeout:g}s") from exc
             finally:
                 # Lesson from relay.mjs: drain & close pipe streams so grandchild processes never hang

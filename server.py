@@ -65,6 +65,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             encoding="utf-8",
             errors="replace",
             timeout=10,
+            env=settings.agy_env(),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
         )
         if ver_proc.returncode == 0:

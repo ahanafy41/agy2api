@@ -60,6 +60,16 @@ MODEL_MAP: dict[str, str] = {
 }
 
 
+# Aliases mapping legacy or alternative ids to canonical model families.
+MODEL_ALIASES: dict[str, str] = {
+    "gemini-3.5-flash": "gemini-3.8-flash",
+    "claude-sonnet-4-6": "claude-sonnet-4.6",
+    "claude-opus-4-6": "claude-opus-4.6",
+    "claude-opus-4-6-thinking": "claude-opus-4.6",
+    "gpt-oss-120b-medium": "gpt-oss-120b",
+}
+
+
 def resolve_model(model: str | None, effort: str | None = None) -> tuple[str | None, str | None]:
     """Translate an exposed model id and optional reasoning_effort to (agy_model, agy_effort).
 
@@ -70,15 +80,18 @@ def resolve_model(model: str | None, effort: str | None = None) -> tuple[str | N
     if not model:
         return None, effort
 
+    # Normalize alias first (e.g. gemini-3.5-flash -> gemini-3.8-flash)
+    canonical = MODEL_ALIASES.get(model, model)
+
     effort_str = (effort or "").lower().strip()
     if effort_str:
         import re
-        base_id = re.sub(r"-(low|medium|high)$", "", model)
+        base_id = re.sub(r"-(low|medium|high)$", "", canonical)
         candidate_id = f"{base_id}-{effort_str}"
         if candidate_id in MODEL_MAP:
             return MODEL_MAP[candidate_id], None
 
-    resolved = MODEL_MAP.get(model, model)
+    resolved = MODEL_MAP.get(canonical, MODEL_MAP.get(model, model))
     if resolved and any(marker in resolved for marker in ("(Medium)", "(High)", "(Low)", "(Thinking)")):
         return resolved, None
 
