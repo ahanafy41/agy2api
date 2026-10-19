@@ -35,24 +35,55 @@ class AgyRunResult:
     stderr: str = ""
 
 
-def _enrich_error(exc: Exception, completed: subprocess.CompletedProcess) -> Exception:
-    """Attach agy's exit status + truncated stderr/stdout to a read/parse error
-    raised after a DB lookup. Previously these diagnostics were only surfaced
-    on the 'no DB found' branch, so an empty/partial DB hid agy's real exit
-    reason (the `no model response found` bug) and forced manual DB probing.
+def _crash_diagnostic(returncode: int | None) -> str:
+    """Lesson from relay.mjs: classify process deaths into actionable hints."""
+    if returncode is None:
+        return ""
+    if returncode in (-9, 137):
+        return " [hint: process was killed with SIGKILL; commonly host OOM killer or supervisor timeout]"
+    if returncode in (-15, 143):
+        return " [hint: process was terminated by SIGTERM; manual kill or external supervisor]"
+    if returncode in (-1073741510, -1, 0xC000013A):
+        return " [hint: process was aborted or interrupted by user on Windows]"
+    if returncode in (-1073741819, 0xC0000005):
+        return " [hint: process crashed with memory Access Violation (0xC0000005)]"
+    return ""
 
-    Re-raises a NEW ValueError with the augmented message so callers that catch
-    by type still work, while log/error responses now carry the cause.
+
+def _tail_lines(text: str, max_lines: int = 20) -> str:
+    """Lesson from relay.mjs: ring buffer tail of last max_lines."""
+    lines = [line.rstrip() for line in (text or "").splitlines() if line.strip()]
+    return "\n".join(lines[-max_lines:])
+
+
+def _atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """Lesson from relay.mjs: publish atomically via temp file rename."""
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp_path.write_text(content, encoding=encoding)
+        os.replace(tmp_path, path)
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
+
+
+def _enrich_error(exc: Exception, completed: subprocess.CompletedProcess) -> Exception:
+    """Attach agy's exit status + rolling stderr tail to a read/parse error
+    raised after a DB lookup.
     """
-    stderr = (completed.stderr or "").strip()
-    stdout = (completed.stdout or "").strip()
-    # Always surface the returncode — it's diagnostic on its own (e.g. -1 =
-    # killed, non-zero = agy error) even when agy printed nothing.
-    enriched = f"{exc} | agy returncode={completed.returncode}"
-    if stderr:
-        enriched += f" stderr={stderr[:800]!r}"
-    if stdout:
-        enriched += f" stdout={stdout[:800]!r}"
+    stderr_tail = _tail_lines(completed.stderr or "", max_lines=20)
+    stdout_tail = _tail_lines(completed.stdout or "", max_lines=10)
+    diag_hint = _crash_diagnostic(completed.returncode)
+
+    enriched = f"{exc} | agy returncode={completed.returncode}{diag_hint}"
+    if stderr_tail:
+        enriched += f" | stderr tail:\n{stderr_tail}"
+    if stdout_tail:
+        enriched += f" | stdout tail:\n{stdout_tail}"
     return type(exc)(enriched) if isinstance(exc, ValueError) else RuntimeError(enriched)
 
 
@@ -171,6 +202,14 @@ def _run_agy_once(
                 else:
                     proc.kill()
                 raise RuntimeError(f"agy timed out after {settings.request_timeout:g}s") from exc
+            finally:
+                # Lesson from relay.mjs: drain & close pipe streams so grandchild processes never hang
+                for stream in (proc.stdout, proc.stderr, proc.stdin):
+                    if stream and not stream.closed:
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
         except FileNotFoundError as exc:
             winerror = getattr(exc, "winerror", None)
             diag = (
@@ -261,9 +300,10 @@ def _run_agy_once(
                 "(silent no-op). Please verify the prompt and model selection."
             )
 
-        details = completed.stderr.strip() or stdout_text or "no output"
+        details = _tail_lines(completed.stderr) or stdout_text or "no output"
+        diag_hint = _crash_diagnostic(completed.returncode)
         raise RuntimeError(
-            f"agy exited with code {completed.returncode}: {details} "
+            f"agy exited with code {completed.returncode}{diag_hint}: {details} "
             f"(no conversation DB found; possible agy-side timeout or crash)"
         )
     finally:

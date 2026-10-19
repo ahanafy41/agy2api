@@ -6,6 +6,8 @@ import asyncio
 import atexit
 import json
 import logging
+import os
+import subprocess
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -54,6 +56,29 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     The shutdown sweep is wrapped in `finally` so it still runs if the served
     application raises during its lifetime. (The `atexit` hook is a further
     last-resort guarantee for the stateful wipe.)"""
+    # Startup preflight probe from relay.mjs: verify agy readiness and extract version
+    try:
+        ver_proc = subprocess.run(
+            [settings.agy_path, "changelog"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+        )
+        if ver_proc.returncode == 0:
+            first_line = (ver_proc.stdout.strip().split("\n") or [""])[0]
+            logger.info("startup preflight: agy CLI is operational (%s)", first_line)
+        else:
+            logger.warning("startup preflight: agy changelog returned %d: %s", ver_proc.returncode, ver_proc.stderr.strip())
+    except FileNotFoundError:
+        logger.error("startup preflight: agy executable not found at %s", settings.agy_path)
+    except subprocess.TimeoutExpired:
+        logger.warning("startup preflight: agy changelog timed out after 10s")
+    except Exception as exc:
+        logger.warning("startup preflight failed: %s", exc)
+
     # Startup housekeeping.
     try:
         if settings.stateful:
