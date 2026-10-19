@@ -99,7 +99,8 @@ def _run_agy_once(
     # hard-killing it and truncating long replies.
     command = [
         settings.agy_path,
-        "--print", "",
+        "--print", prompt,
+        "--disable-slash-commands",
         "--log-file", log_path,
         "--print-timeout", f"{int(settings.request_timeout)}s",
     ]

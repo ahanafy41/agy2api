@@ -45,14 +45,18 @@ def _csv_env(name: str, default: list[str]) -> list[str]:
 # display labels that `agy models` prints and `agy --model` accepts verbatim.
 # Update this if `agy models` changes its catalog.
 MODEL_MAP: dict[str, str] = {
-    "gemini-3.5-flash": "Gemini 3.5 Flash (Medium)",
-    "gemini-3.5-flash-high": "Gemini 3.5 Flash (High)",
-    "gemini-3.5-flash-low": "Gemini 3.5 Flash (Low)",
-    "gemini-3.1-pro": "Gemini 3.1 Pro (High)",
-    "gemini-3.1-pro-low": "Gemini 3.1 Pro (Low)",
+    "gemini-3.8-flash": "Gemini 3.8 Flash (Medium)",
+    "gemini-3.8-flash-medium": "Gemini 3.8 Flash (Medium)",
+    "gemini-3.8-flash-high": "Gemini 3.8 Flash (High)",
+    "gemini-3.8-flash-low": "Gemini 3.8 Flash (Low)",
+    "gemini-3.5-flash": "Gemini 3.8 Flash (Medium)",
     "claude-sonnet-4.6": "Claude Sonnet 4.6 (Thinking)",
+    "claude-sonnet-4-6": "Claude Sonnet 4.6 (Thinking)",
     "claude-opus-4.6": "Claude Opus 4.6 (Thinking)",
+    "claude-opus-4-6": "Claude Opus 4.6 (Thinking)",
+    "claude-opus-4-6-thinking": "Claude Opus 4.6 (Thinking)",
     "gpt-oss-120b": "GPT-OSS 120B (Medium)",
+    "gpt-oss-120b-medium": "GPT-OSS 120B (Medium)",
 }
 
 
