@@ -50,6 +50,9 @@ MODEL_MAP: dict[str, str] = {
     "gemini-3.8-flash-high": "Gemini 3.8 Flash (High)",
     "gemini-3.8-flash-low": "Gemini 3.8 Flash (Low)",
     "gemini-3.5-flash": "Gemini 3.8 Flash (Medium)",
+    "gemini-3.5-flash-medium": "Gemini 3.8 Flash (Medium)",
+    "gemini-3.5-flash-high": "Gemini 3.8 Flash (High)",
+    "gemini-3.5-flash-low": "Gemini 3.8 Flash (Low)",
     "claude-sonnet-4.6": "Claude Sonnet 4.6 (Thinking)",
     "claude-sonnet-4-6": "Claude Sonnet 4.6 (Thinking)",
     "claude-opus-4.6": "Claude Opus 4.6 (Thinking)",
@@ -63,6 +66,9 @@ MODEL_MAP: dict[str, str] = {
 # Aliases mapping legacy or alternative ids to canonical model families.
 MODEL_ALIASES: dict[str, str] = {
     "gemini-3.5-flash": "gemini-3.8-flash",
+    "gemini-3.5-flash-medium": "gemini-3.8-flash",
+    "gemini-3.5-flash-high": "gemini-3.8-flash-high",
+    "gemini-3.5-flash-low": "gemini-3.8-flash-low",
     "claude-sonnet-4-6": "claude-sonnet-4.6",
     "claude-opus-4-6": "claude-opus-4.6",
     "claude-opus-4-6-thinking": "claude-opus-4.6",
@@ -70,7 +76,9 @@ MODEL_ALIASES: dict[str, str] = {
 }
 
 
-def resolve_model(model: str | None, effort: str | None = None) -> tuple[str | None, str | None]:
+def resolve_model(
+    model: str | None, effort: str | None = None
+) -> tuple[str | None, str | None]:
     """Translate an exposed model id and optional reasoning_effort to (agy_model, agy_effort).
 
     If the catalog bakes effort into the model name (e.g. Gemini 3.8 Flash High/Med/Low),
@@ -86,13 +94,16 @@ def resolve_model(model: str | None, effort: str | None = None) -> tuple[str | N
     effort_str = (effort or "").lower().strip()
     if effort_str:
         import re
+
         base_id = re.sub(r"-(low|medium|high)$", "", canonical)
         candidate_id = f"{base_id}-{effort_str}"
         if candidate_id in MODEL_MAP:
             return MODEL_MAP[candidate_id], None
 
     resolved = MODEL_MAP.get(canonical, MODEL_MAP.get(model, model))
-    if resolved and any(marker in resolved for marker in ("(Medium)", "(High)", "(Low)", "(Thinking)")):
+    if resolved and any(
+        marker in resolved for marker in ("(Medium)", "(High)", "(Low)", "(Thinking)")
+    ):
         return resolved, None
 
     return resolved, effort
@@ -172,7 +183,9 @@ class Settings:
         # In stateful mode, redirect conversations_dir into the isolated home
         # so agy reads/writes only there (and our sweeps stay self-contained).
         if self.stateful:
-            sandbox_conv = self.stateful_home / ".gemini" / "antigravity-cli" / "conversations"
+            sandbox_conv = (
+                self.stateful_home / ".gemini" / "antigravity-cli" / "conversations"
+            )
             object.__setattr__(self, "conversations_dir", sandbox_conv)
 
     def agy_env(self) -> dict[str, str]:

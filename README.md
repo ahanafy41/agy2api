@@ -192,8 +192,9 @@ Disk usage cannot grow unbounded.
   so for long chats prefer a low-reasoning model (e.g. `gemini-3.8-flash-low` or `"reasoning_effort": "low"`)
   to finish sooner, and/or route `*.googleapis.com` through a proxy that allows
   long-lived connections (or direct).
-- On Windows, command-line arguments are capped at ~32KB by `CreateProcessW`. Prompts
-  exceeding 30,000 characters trigger an early guard advising the use of stateful mode
+- On Windows, command-line arguments are capped at 32,767 characters by `CreateProcessW`. Fully
+  assembled commands exceeding 32,000 UTF-16 code units (where non-BMP / supplementary Unicode
+  characters count as two code units) trigger an early guard advising the use of stateful mode
   (`AGY2API_STATEFUL=1`) so only incremental turns are sent.
 
 ## Testing
@@ -204,7 +205,7 @@ Run the zero-dependency test suite (uses Python's standard library `unittest`):
 python run_tests.py -v
 ```
 
-All 18 tests execute in ~0.06s and verify model alias/effort resolution, configuration settings, Pydantic requests, real SQLite conversation extraction, stateful session store, fake streaming, and Windows command-line limit detection.
+All 21 tests execute in ~0.08s and verify model alias/effort resolution, configuration settings, Pydantic requests, real SQLite conversation extraction, stateful session store, fake streaming, and Windows command-line limit detection/cleanup.
 
 ## Maintenance
 

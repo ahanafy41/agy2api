@@ -17,7 +17,6 @@ from pathlib import Path
 from config import settings
 from conversation_reader import AgResponse, UpstreamError, read_response
 
-
 # Lesson from relay.mjs: catch headless auto-denied tool permissions
 _PERMISSION_DENIED_RE = re.compile(
     r'(?:no output produced\s+[—-]\s+)?a tool required the "([^"]+)" permission that headless\s+mode cannot prompt for',
@@ -56,7 +55,6 @@ def _tail_lines(text: str, max_lines: int = 20) -> str:
     return "\n".join(lines[-max_lines:])
 
 
-
 def _enrich_error(exc: Exception, completed: subprocess.CompletedProcess) -> Exception:
     """Attach agy's exit status + rolling stderr tail to a read/parse error
     raised after a DB lookup.
@@ -70,7 +68,21 @@ def _enrich_error(exc: Exception, completed: subprocess.CompletedProcess) -> Exc
         enriched += f" | stderr tail:\n{stderr_tail}"
     if stdout_tail:
         enriched += f" | stdout tail:\n{stdout_tail}"
-    return type(exc)(enriched) if isinstance(exc, ValueError) else RuntimeError(enriched)
+    return (
+        type(exc)(enriched) if isinstance(exc, ValueError) else RuntimeError(enriched)
+    )
+
+
+def check_windows_command_length(command: list[str]) -> int:
+    """Validate Windows command line length against CreateProcessW's ~32,767 limit."""
+    assembled_cmd = subprocess.list2cmdline(command)
+    utf16_len = len(assembled_cmd.encode("utf-16-le")) // 2
+    if utf16_len > 32_000:
+        raise ValueError(
+            f"Command line length ({utf16_len} UTF-16 code units) exceeds Windows limit (~32KB). "
+            "Please enable stateful mode (AGY2API_STATEFUL=1) to send only incremental turns."
+        )
+    return utf16_len
 
 
 def _run_agy_once(
@@ -114,42 +126,40 @@ def _run_agy_once(
     log_fd, log_path = tempfile.mkstemp(prefix="agy2api-", suffix=".log")
     os.close(log_fd)
 
-    command = [
-        settings.agy_path,
-        f"--print={prompt}",
-        "--disable-slash-commands",
-        "--log-file", log_path,
-        "--print-timeout", f"{int(settings.request_timeout)}s",
-    ]
-    # Lesson from relay.mjs: explicitly anchor workspace directory via absolute path
-    command.extend(["--add-dir", str(Path(workdir).resolve())])
-    if settings.sandbox:
-        command.append("--sandbox")
-    if settings.dangerously_skip_permissions:
-        command.append("--dangerously-skip-permissions")
-    if conversation_id:
-        command.extend(["--conversation", conversation_id])
-    if model:
-        command.extend(["--model", model])
-    # Lesson from relay.mjs: reasoning effort passed directly to agy --effort
-    if effort:
-        command.extend(["--effort", effort])
-
-    # Lesson from relay.mjs: On Windows, CreateProcessW limits lpCommandLine to ~32,767
-    # UTF-16 code units. Check the fully assembled command line to prevent WinError 206.
-    if os.name == "nt":
-        assembled_cmd = subprocess.list2cmdline(command)
-        utf16_len = len(assembled_cmd.encode("utf-16-le")) // 2
-        if utf16_len > 32_000:
-            raise ValueError(
-                f"Command line length ({utf16_len} UTF-16 code units) exceeds Windows limit (~32KB). "
-                "Please enable stateful mode (AGY2API_STATEFUL=1) to send only incremental turns."
-            )
-
-    # Windows: suppress the console window that flashes for each agy subprocess.
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-
     try:
+        command = [
+            settings.agy_path,
+            f"--print={prompt}",
+            "--disable-slash-commands",
+            "--log-file",
+            log_path,
+            "--print-timeout",
+            f"{int(settings.request_timeout)}s",
+        ]
+        # Lesson from relay.mjs: explicitly anchor workspace directory via absolute path
+        command.extend(["--add-dir", str(Path(workdir).resolve())])
+        if settings.sandbox:
+            command.append("--sandbox")
+        if settings.dangerously_skip_permissions:
+            command.append("--dangerously-skip-permissions")
+        if conversation_id:
+            command.extend(["--conversation", conversation_id])
+        if model:
+            command.extend(["--model", model])
+        # Lesson from relay.mjs: reasoning effort passed directly to agy --effort
+        if effort:
+            command.extend(["--effort", effort])
+
+        # Lesson from relay.mjs: On Windows, CreateProcessW limits lpCommandLine to ~32,767
+        # UTF-16 code units. Check the fully assembled command line to prevent WinError 206.
+        if os.name == "nt":
+            check_windows_command_length(command)
+
+        # Windows: suppress the console window that flashes for each agy subprocess.
+        creationflags = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+        )
+
         try:
             # Lesson from relay.mjs: read raw bytes and decode using incremental UTF-8
             # decoder so multi-byte Unicode/Arabic characters are never mangled across chunk boundaries.
@@ -162,7 +172,9 @@ def _run_agy_once(
                 creationflags=creationflags,
             )
             try:
-                raw_stdout, raw_stderr = proc.communicate(timeout=settings.request_timeout + 20)
+                raw_stdout, raw_stderr = proc.communicate(
+                    timeout=settings.request_timeout + 20
+                )
                 decoder = codecs.getincrementaldecoder("utf-8")("replace")
                 stdout = decoder.decode(raw_stdout, final=True)
                 stderr = decoder.decode(raw_stderr, final=True)
@@ -191,7 +203,9 @@ def _run_agy_once(
                     proc.wait(timeout=2)
                 except Exception:
                     pass
-                raise RuntimeError(f"agy timed out after {settings.request_timeout:g}s") from exc
+                raise RuntimeError(
+                    f"agy timed out after {settings.request_timeout:g}s"
+                ) from exc
             finally:
                 # Lesson from relay.mjs: drain & close pipe streams so grandchild processes never hang
                 for stream in (proc.stdout, proc.stderr, proc.stdin):
@@ -232,7 +246,9 @@ def _run_agy_once(
         owned_by_us = db_path is not None
         if db_path is None:
             # Fallback: log gave no conversation id (older agy?) — pick newest new DB.
-            db_path = _find_new_conversation_db(settings.conversations_dir, before, start_time)
+            db_path = _find_new_conversation_db(
+                settings.conversations_dir, before, start_time
+            )
 
         if db_path is not None:
             try:
@@ -364,19 +380,25 @@ def run_agy(
             last_exc = exc
             if _is_permanent_upstream(str(exc)):
                 # Same prompt would re-hit the same block — surface immediately.
-                logger.warning("agy upstream error looks permanent; not retrying: %s", exc)
+                logger.warning(
+                    "agy upstream error looks permanent; not retrying: %s", exc
+                )
                 raise
             if attempt + 1 < _UPSTREAM_RETRY_MAX:
                 wait = _UPSTREAM_BACKOFFS[min(attempt, len(_UPSTREAM_BACKOFFS) - 1)]
                 logger.warning(
                     "agy upstream error (attempt %d/%d), retrying in %.1fs: %s",
-                    attempt + 1, _UPSTREAM_RETRY_MAX, wait, exc,
+                    attempt + 1,
+                    _UPSTREAM_RETRY_MAX,
+                    wait,
+                    exc,
                 )
                 time.sleep(wait)
             else:
                 logger.warning(
                     "agy upstream error exhausted %d attempts: %s",
-                    _UPSTREAM_RETRY_MAX, exc,
+                    _UPSTREAM_RETRY_MAX,
+                    exc,
                 )
     # Exhausted retries — surface the last upstream error verbatim.
     assert last_exc is not None
@@ -545,7 +567,9 @@ async def run_agy_async(
     keep: bool = False,
     effort: str | None = None,
 ) -> AgyRunResult:
-    return await asyncio.to_thread(run_agy, prompt, model, conversation_id, keep, effort)
+    return await asyncio.to_thread(
+        run_agy, prompt, model, conversation_id, keep, effort
+    )
 
 
 def _snapshot_conversations(directory: Path) -> dict[Path, float]:
@@ -570,7 +594,11 @@ def _find_new_conversation_db(
                     mtime = path.stat().st_mtime
                 except OSError:
                     continue
-                if path not in before or mtime > before.get(path, 0) or mtime >= start_time - 1:
+                if (
+                    path not in before
+                    or mtime > before.get(path, 0)
+                    or mtime >= start_time - 1
+                ):
                     candidates.append(path)
 
         if candidates:

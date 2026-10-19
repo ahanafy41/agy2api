@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import subprocess
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-from config import MODEL_ALIASES, MODEL_MAP, Settings, resolve_model
-from conversation_reader import AgResponse, UpstreamError, read_response
+from agy_runner import check_windows_command_length
+from config import MODEL_MAP, Settings, resolve_model
+from conversation_reader import UpstreamError, read_response
 from fake_stream import build_chunks, split_text, sse_event
 from models import ChatCompletionRequest, ChatMessage
 from session_store import SessionStore, fingerprint
@@ -46,6 +46,19 @@ class ModelResolutionTests(unittest.TestCase):
         model, effort = resolve_model("gemini-3.5-flash", "high")
         self.assertEqual(model, "Gemini 3.8 Flash (High)")
         self.assertIsNone(effort, "Effort should be None when catalog encodes effort")
+
+    def test_legacy_gemini_35_flash_effort_variants_resolve(self) -> None:
+        """Legacy gemini-3.5-flash-low/medium/high IDs must resolve to Gemini 3.8 Flash variants."""
+        cases = [
+            ("gemini-3.5-flash-low", "Gemini 3.8 Flash (Low)"),
+            ("gemini-3.5-flash-medium", "Gemini 3.8 Flash (Medium)"),
+            ("gemini-3.5-flash-high", "Gemini 3.8 Flash (High)"),
+        ]
+        for model_id, expected_label in cases:
+            with self.subTest(model_id=model_id):
+                model, effort = resolve_model(model_id)
+                self.assertEqual(model, expected_label)
+                self.assertIsNone(effort)
 
     def test_direct_effort_variant_drops_cli_effort_flag(self) -> None:
         """Models with baked-in effort must not pass --effort to avoid agy CLI errors."""
@@ -134,16 +147,14 @@ class ConversationDatabaseReaderTests(unittest.TestCase):
         self.fd, self.db_path = tempfile.mkstemp(prefix="agy-test-", suffix=".db")
         os.close(self.fd)
         conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE steps (
                 idx INTEGER PRIMARY KEY,
                 step_type INTEGER,
                 status INTEGER,
                 step_payload BLOB
             )
-            """
-        )
+            """)
         conn.commit()
         conn.close()
 
@@ -170,7 +181,9 @@ class ConversationDatabaseReaderTests(unittest.TestCase):
     def test_step_17_error_with_upstream_keyword_raises_upstream_error(self) -> None:
         """An error step (17) containing upstream keywords must raise UpstreamError."""
         # Protobuf string payload containing the keyword
-        payload = _encode_field(1, 2, "upstream stream reading error occurred".encode("utf-8"))
+        payload = _encode_field(
+            1, 2, "upstream stream reading error occurred".encode("utf-8")
+        )
 
         conn = sqlite3.connect(self.db_path)
         conn.execute("INSERT INTO steps VALUES (1, 17, 3, ?)", (payload,))
@@ -236,7 +249,9 @@ class FakeStreamHelpersTests(unittest.TestCase):
 
     def test_build_chunks_structures_standard_openai_stream_events(self) -> None:
         """build_chunks must create initial role delta, reasoning, content, and stop chunks."""
-        chunks = build_chunks(answer="Hello", reasoning="Thinking", model="gemini-3.8-flash")
+        chunks = build_chunks(
+            answer="Hello", reasoning="Thinking", model="gemini-3.8-flash"
+        )
         self.assertTrue(len(chunks) >= 4)
         self.assertEqual(chunks[0]["choices"][0]["delta"]["role"], "assistant")
         self.assertEqual(chunks[-1]["choices"][0]["finish_reason"], "stop")
@@ -250,15 +265,46 @@ class FakeStreamHelpersTests(unittest.TestCase):
 
 
 class WindowsCommandLineGuardTests(unittest.TestCase):
-    """Test Windows ~32KB command line overflow detection."""
+    """Test Windows ~32KB command line overflow detection and cleanup."""
 
-    def test_assembled_command_exceeding_windows_limit_is_detected(self) -> None:
-        """Assembled command exceeding 32,000 UTF-16 code units must be flaggable."""
+    def test_check_windows_command_length_accepts_normal_command(self) -> None:
+        """Normal commands under 32,000 UTF-16 code units pass and return code unit count."""
+        command = ["agy.exe", "--print=hello", "--disable-slash-commands"]
+        count = check_windows_command_length(command)
+        self.assertGreater(count, 0)
+        self.assertLess(count, 32_000)
+
+    def test_check_windows_command_length_rejects_oversized_command(self) -> None:
+        """Commands exceeding 32,000 UTF-16 code units must raise ValueError."""
         huge_prompt = "a" * 32_500
         command = ["agy.exe", f"--print={huge_prompt}", "--disable-slash-commands"]
-        assembled = subprocess.list2cmdline(command)
-        utf16_len = len(assembled.encode("utf-16-le")) // 2
-        self.assertGreater(utf16_len, 32_000)
+        with self.assertRaises(ValueError) as ctx:
+            check_windows_command_length(command)
+        self.assertIn("exceeds Windows limit", str(ctx.exception))
+
+    def test_oversized_run_cleans_up_temporary_log_file(self) -> None:
+        """_run_agy_once must delete log_path when command length check fails."""
+        from agy_runner import _run_agy_once
+
+        huge_prompt = "a" * 32_500
+        temp_dir = tempfile.gettempdir()
+        before_logs = set(Path(temp_dir).glob("agy2api-*.log"))
+
+        with self.assertRaises(ValueError):
+            _run_agy_once(
+                prompt=huge_prompt,
+                model=None,
+                conversation_id=None,
+                keep=False,
+            )
+
+        after_logs = set(Path(temp_dir).glob("agy2api-*.log"))
+        new_leaked_logs = after_logs - before_logs
+        self.assertEqual(
+            new_leaked_logs,
+            set(),
+            f"Oversized command leaked log files: {new_leaked_logs}",
+        )
 
 
 if __name__ == "__main__":
