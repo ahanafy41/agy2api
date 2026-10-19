@@ -124,6 +124,9 @@ class Settings:
     workdir: Path = Path(
         os.getenv("AGY_WORKDIR", str(Path(__file__).resolve().parent.parent))
     )
+    # Lessons from relay.mjs: sandbox and permission automation
+    sandbox: bool = _bool_env("AGY2API_SANDBOX", False)
+    dangerously_skip_permissions: bool = _bool_env("AGY2API_SKIP_PERMISSIONS", False)
     models: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:

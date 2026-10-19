@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import logging
 import os
 import re
@@ -16,6 +17,12 @@ from pathlib import Path
 from config import settings
 from conversation_reader import AgResponse, UpstreamError, read_response
 
+
+# Lesson from relay.mjs: catch headless auto-denied tool permissions
+_PERMISSION_DENIED_RE = re.compile(
+    r'(?:no output produced\s+[—-]\s+)?a tool required the "([^"]+)" permission that headless\s+mode cannot prompt for',
+    re.IGNORECASE,
+)
 
 # Same logger name as server.py so retry/timeout warnings share one format.
 logger = logging.getLogger("agy2api")
@@ -112,6 +119,12 @@ def _run_agy_once(
         "--log-file", log_path,
         "--print-timeout", f"{int(settings.request_timeout)}s",
     ]
+    # Lesson from relay.mjs: explicitly anchor workspace directory via absolute path
+    command.extend(["--add-dir", str(Path(workdir).resolve())])
+    if settings.sandbox:
+        command.append("--sandbox")
+    if settings.dangerously_skip_permissions:
+        command.append("--dangerously-skip-permissions")
     if conversation_id:
         command.extend(["--conversation", conversation_id])
     if model:
@@ -122,19 +135,21 @@ def _run_agy_once(
 
     try:
         try:
+            # Lesson from relay.mjs: read raw bytes and decode using incremental UTF-8
+            # decoder so multi-byte Unicode/Arabic characters are never mangled across chunk boundaries.
             proc = subprocess.Popen(
                 command,
                 cwd=workdir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 env=settings.agy_env(),
                 creationflags=creationflags,
             )
             try:
-                stdout, stderr = proc.communicate(timeout=settings.request_timeout + 20)
+                raw_stdout, raw_stderr = proc.communicate(timeout=settings.request_timeout + 20)
+                decoder = codecs.getincrementaldecoder("utf-8")("replace")
+                stdout = decoder.decode(raw_stdout, final=True)
+                stderr = decoder.decode(raw_stderr, final=True)
                 completed = subprocess.CompletedProcess(
                     args=command,
                     returncode=proc.returncode,
@@ -165,6 +180,14 @@ def _run_agy_once(
                 f"exc_filename={getattr(exc, 'filename', None)!r}"
             )
             raise RuntimeError(diag) from exc
+
+        # Lesson from relay.mjs: inspect stderr for headless auto-denied tool permissions
+        perm_match = _PERMISSION_DENIED_RE.search(completed.stderr or "")
+        if perm_match:
+            raise RuntimeError(
+                f"Antigravity auto-denied the '{perm_match.group(1)}' tool permission because "
+                "headless print mode cannot prompt for permissions. Enable AGY2API_SKIP_PERMISSIONS=1 if needed."
+            )
 
         # Attempt to read the conversation DB *before* checking returncode.
         # When agy is killed mid-generation (returncode -1 on Windows, agy-side
@@ -231,13 +254,18 @@ def _run_agy_once(
                 stderr=completed.stderr,
             )
 
-        if completed.returncode != 0:
-            details = completed.stderr.strip() or stdout_text or "no output"
+        # Lesson from relay.mjs: reject silent no-op (exit 0 with no response or output)
+        if completed.returncode == 0:
             raise RuntimeError(
-                f"agy exited with code {completed.returncode}: {details} "
-                f"(no conversation DB found; possible agy-side timeout or crash)"
+                "agy exited with code 0 without producing a final message or database response "
+                "(silent no-op). Please verify the prompt and model selection."
             )
-        raise RuntimeError("agy completed but no new conversation database was found")
+
+        details = completed.stderr.strip() or stdout_text or "no output"
+        raise RuntimeError(
+            f"agy exited with code {completed.returncode}: {details} "
+            f"(no conversation DB found; possible agy-side timeout or crash)"
+        )
     finally:
         try:
             os.remove(log_path)
