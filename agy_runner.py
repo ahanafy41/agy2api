@@ -96,10 +96,18 @@ def _run_agy_once(
     # Give agy its OWN print-timeout equal to our budget, and let our subprocess
     # timeout sit a margin ABOVE it. That way agy hits its timeout first and
     # flushes whatever partial response it has (degrade-readable) instead of us
-    # hard-killing it and truncating long replies.
+    # Lesson from relay.mjs: verify prompt size against Windows command-line limit (~32KB).
+    if os.name == "nt" and len(prompt) > 30_000:
+        raise ValueError(
+            f"Prompt length ({len(prompt)} chars) exceeds Windows command-line limit (~32KB). "
+            "Please enable stateful mode (AGY2API_STATEFUL=1) to send only incremental turns."
+        )
+
+    # Lesson from relay.mjs: pass --print=<prompt> to bind the value firmly so
+    # prompts starting with dashes/flags are never misparsed.
     command = [
         settings.agy_path,
-        "--print", prompt,
+        f"--print={prompt}",
         "--disable-slash-commands",
         "--log-file", log_path,
         "--print-timeout", f"{int(settings.request_timeout)}s",
@@ -114,19 +122,40 @@ def _run_agy_once(
 
     try:
         try:
-            completed = subprocess.run(
+            proc = subprocess.Popen(
                 command,
                 cwd=workdir,
-                input=prompt,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=settings.request_timeout + 20,
-                check=False,
                 env=settings.agy_env(),
                 creationflags=creationflags,
             )
+            try:
+                stdout, stderr = proc.communicate(timeout=settings.request_timeout + 20)
+                completed = subprocess.CompletedProcess(
+                    args=command,
+                    returncode=proc.returncode,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+            except subprocess.TimeoutExpired as exc:
+                # Lesson from relay.mjs: forceful tree termination via taskkill on Windows
+                if os.name == "nt" and proc.pid:
+                    try:
+                        subprocess.run(
+                            ["taskkill", "/pid", str(proc.pid), "/t", "/f"],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                    except Exception:
+                        pass
+                else:
+                    proc.kill()
+                raise RuntimeError(f"agy timed out after {settings.request_timeout:g}s") from exc
         except FileNotFoundError as exc:
             winerror = getattr(exc, "winerror", None)
             diag = (
@@ -136,8 +165,6 @@ def _run_agy_once(
                 f"exc_filename={getattr(exc, 'filename', None)!r}"
             )
             raise RuntimeError(diag) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(f"agy timed out after {settings.request_timeout:g}s") from exc
 
         # Attempt to read the conversation DB *before* checking returncode.
         # When agy is killed mid-generation (returncode -1 on Windows, agy-side
@@ -189,9 +216,23 @@ def _run_agy_once(
                 stderr=completed.stderr,
             )
 
-        # No DB found at all — now report the exit status.
+        # No DB found at all — fallback lesson from relay.mjs: if agy printed to stdout, use it!
+        stdout_text = (completed.stdout or "").strip()
+        if completed.returncode == 0 and stdout_text:
+            return AgyRunResult(
+                db_path=Path(""),
+                response=AgResponse(
+                    answer=stdout_text,
+                    reasoning="",
+                    tool_summaries=(),
+                    db_path="",
+                    truncated=False,
+                ),
+                stderr=completed.stderr,
+            )
+
         if completed.returncode != 0:
-            details = completed.stderr.strip() or completed.stdout.strip() or "no output"
+            details = completed.stderr.strip() or stdout_text or "no output"
             raise RuntimeError(
                 f"agy exited with code {completed.returncode}: {details} "
                 f"(no conversation DB found; possible agy-side timeout or crash)"
