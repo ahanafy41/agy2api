@@ -60,12 +60,29 @@ MODEL_MAP: dict[str, str] = {
 }
 
 
-def resolve_model(model: str | None) -> str | None:
-    """Translate an exposed model id to the agy label. Pass through unknown
-    values unchanged so raw `agy` labels also work directly."""
+def resolve_model(model: str | None, effort: str | None = None) -> tuple[str | None, str | None]:
+    """Translate an exposed model id and optional reasoning_effort to (agy_model, agy_effort).
+
+    If the catalog bakes effort into the model name (e.g. Gemini 3.8 Flash High/Med/Low),
+    we select the matching variant directly and drop agy_effort so agy does not exit with
+    '--effort is not supported for model ...'.
+    """
     if not model:
-        return None
-    return MODEL_MAP.get(model, model)
+        return None, effort
+
+    effort_str = (effort or "").lower().strip()
+    if effort_str:
+        import re
+        base_id = re.sub(r"-(low|medium|high)$", "", model)
+        candidate_id = f"{base_id}-{effort_str}"
+        if candidate_id in MODEL_MAP:
+            return MODEL_MAP[candidate_id], None
+
+    resolved = MODEL_MAP.get(model, model)
+    if resolved and any(marker in resolved for marker in ("(Medium)", "(High)", "(Low)", "(Thinking)")):
+        return resolved, None
+
+    return resolved, effort
 
 
 @dataclass(frozen=True)
@@ -124,12 +141,16 @@ class Settings:
     workdir: Path = Path(
         os.getenv("AGY_WORKDIR", str(Path(__file__).resolve().parent.parent))
     )
-    # Lessons from relay.mjs: sandbox and permission automation
+    # Lessons from relay.mjs: sandbox, permission automation, and read-only mode
     sandbox: bool = _bool_env("AGY2API_SANDBOX", False)
     dangerously_skip_permissions: bool = _bool_env("AGY2API_SKIP_PERMISSIONS", False)
+    read_only: bool = _bool_env("AGY2API_READ_ONLY", False)
     models: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
+        if self.read_only:
+            object.__setattr__(self, "sandbox", True)
+            object.__setattr__(self, "dangerously_skip_permissions", True)
         object.__setattr__(
             self,
             "models",

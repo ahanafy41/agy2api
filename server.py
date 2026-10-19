@@ -151,13 +151,23 @@ def _conv_lock(conversation_id: str) -> asyncio.Lock:
 
 
 async def _run_agy_guarded(
-    prompt: str, model: str | None, conversation_id: str | None = None, keep: bool = False
+    prompt: str,
+    model: str | None,
+    conversation_id: str | None = None,
+    keep: bool = False,
+    effort: str | None = None,
 ):
     async with _run_semaphore:
-        return await run_agy_async(prompt, model, conversation_id, keep)
+        return await run_agy_async(prompt, model, conversation_id, keep, effort)
 
 
-async def _execute_run(prompt: str, model: str | None, resume_id: str | None, keep: bool):
+async def _execute_run(
+    prompt: str,
+    model: str | None,
+    resume_id: str | None,
+    keep: bool,
+    effort: str | None = None,
+):
     """Run agy, serializing turns of the same resumed conversation so concurrent
     requests for one chat don't corrupt its session.
 
@@ -169,10 +179,10 @@ async def _execute_run(prompt: str, model: str | None, resume_id: str | None, ke
         async with _conv_lock(resume_id):
             _in_flight.add(resume_id)
             try:
-                return await _run_agy_guarded(prompt, model, resume_id, keep)
+                return await _run_agy_guarded(prompt, model, resume_id, keep, effort)
             finally:
                 _in_flight.discard(resume_id)
-    return await _run_agy_guarded(prompt, model, None, keep)
+    return await _run_agy_guarded(prompt, model, None, keep, effort)
 
 
 def _msg_sigs(messages: list[Any]) -> list[str]:
@@ -246,25 +256,25 @@ async def chat_completions(
     _: None = Depends(verify_token),
 ):
     model = request_body.model
-    agy_model = resolve_model(model)
+    agy_model, agy_effort = resolve_model(model, request_body.reasoning_effort)
     prompt, resume_id, sigs = _plan_request(request_body.messages)
     keep = settings.stateful
     logger.info(
-        "request: model=%s (agy=%s) stream=%s messages=%d prompt_chars=%d resume=%s",
-        model, agy_model, request_body.stream, len(request_body.messages),
-        len(prompt), bool(resume_id),
+        "request: model=%s (agy=%s) effort=%s (agy_effort=%s) stream=%s messages=%d prompt_chars=%d resume=%s",
+        model, agy_model, request_body.reasoning_effort, agy_effort, request_body.stream,
+        len(request_body.messages), len(prompt), bool(resume_id),
     )
 
     if request_body.stream:
         return StreamingResponse(
-            _stream_response(prompt, model, agy_model, request, resume_id, keep, sigs),
+            _stream_response(prompt, model, agy_model, request, resume_id, keep, sigs, agy_effort),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     started = time.time()
     try:
-        result = await _execute_run(prompt, agy_model, resume_id, keep)
+        result = await _execute_run(prompt, agy_model, resume_id, keep, agy_effort)
     except Exception as exc:
         _forget_session(resume_id)
         logger.error(
@@ -296,11 +306,17 @@ async def health() -> dict[str, str]:
 
 
 async def _stream_response(
-    prompt: str, model: str, agy_model: str | None, request: Request,
-    resume_id: str | None = None, keep: bool = False, sigs: list[str] | None = None,
+    prompt: str,
+    model: str,
+    agy_model: str | None,
+    request: Request,
+    resume_id: str | None = None,
+    keep: bool = False,
+    sigs: list[str] | None = None,
+    effort: str | None = None,
 ) -> AsyncIterator[bytes]:
     started = time.time()
-    task = asyncio.create_task(_execute_run(prompt, agy_model, resume_id, keep))
+    task = asyncio.create_task(_execute_run(prompt, agy_model, resume_id, keep, effort))
     try:
         while not task.done():
             if await request.is_disconnected():

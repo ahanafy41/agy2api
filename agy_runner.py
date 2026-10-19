@@ -92,6 +92,7 @@ def _run_agy_once(
     model: str | None,
     conversation_id: str | None,
     keep: bool,
+    effort: str | None = None,
 ) -> AgyRunResult:
     """Run agy exactly once and read the result. See run_agy for retry policy."""
     start_time = time.time()
@@ -155,6 +156,9 @@ def _run_agy_once(
         command.extend(["--conversation", conversation_id])
     if model:
         command.extend(["--model", model])
+    # Lesson from relay.mjs: reasoning effort passed directly to agy --effort
+    if effort:
+        command.extend(["--effort", effort])
 
     # Windows: suppress the console window that flashes for each agy subprocess.
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
@@ -344,6 +348,7 @@ def run_agy(
     model: str | None = None,
     conversation_id: str | None = None,
     keep: bool = False,
+    effort: str | None = None,
 ) -> AgyRunResult:
     """Run agy, retrying transient upstream errors.
 
@@ -358,11 +363,12 @@ def run_agy(
       only the new turn needs to be sent instead of the full history.
     keep: never delete the conversation DB afterwards (a stateful session owns
       its lifecycle and needs the memory for later turns).
+    effort: reasoning effort level for models that support it (low, medium, high, etc.).
     """
     last_exc: Exception | None = None
     for attempt in range(_UPSTREAM_RETRY_MAX):
         try:
-            return _run_agy_once(prompt, model, conversation_id, keep)
+            return _run_agy_once(prompt, model, conversation_id, keep, effort)
         except UpstreamError as exc:
             last_exc = exc
             if _is_permanent_upstream(str(exc)):
@@ -546,8 +552,9 @@ async def run_agy_async(
     model: str | None = None,
     conversation_id: str | None = None,
     keep: bool = False,
+    effort: str | None = None,
 ) -> AgyRunResult:
-    return await asyncio.to_thread(run_agy, prompt, model, conversation_id, keep)
+    return await asyncio.to_thread(run_agy, prompt, model, conversation_id, keep, effort)
 
 
 def _snapshot_conversations(directory: Path) -> dict[Path, float]:
