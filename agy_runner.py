@@ -127,14 +127,9 @@ def _run_agy_once(
     log_fd, log_path = tempfile.mkstemp(prefix="agy2api-", suffix=".log")
     os.close(log_fd)
 
-    # The prompt is fed via stdin (with an empty --print value) instead of as a
-    # command-line argument. agy concatenates stdin into the prompt, and stdin
-    # has no length limit, avoiding the Windows ~32767-char command-line cap that
-    # raises WinError 206 for long prompts (system + history).
-    # Give agy its OWN print-timeout equal to our budget, and let our subprocess
-    # timeout sit a margin ABOVE it. That way agy hits its timeout first and
-    # flushes whatever partial response it has (degrade-readable) instead of us
-    # Lesson from relay.mjs: verify prompt size against Windows command-line limit (~32KB).
+    # Lesson from relay.mjs: pass the prompt directly via --print=<prompt>.
+    # On Windows, command-line length is capped at ~32KB. Check prompt length
+    # up-front to prevent WinError 206 crashes.
     if os.name == "nt" and len(prompt) > 30_000:
         raise ValueError(
             f"Prompt length ({len(prompt)} chars) exceeds Windows command-line limit (~32KB). "
