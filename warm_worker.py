@@ -64,7 +64,7 @@ class WarmAgyWorker:
 
         token_src = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
         token_dst = target_dir / "antigravity-oauth-token"
-        if token_src.exists() and (not token_dst.exists() or token_src.stat().st_mtime > token_dst.stat().st_mtime):
+        if token_src.exists():
             shutil.copy2(token_src, token_dst)
 
         # Keep updater silent
