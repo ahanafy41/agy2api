@@ -1,5 +1,11 @@
-#!/data/data/com.termux/files/usr/bin/env bash
+#!/bin/sh
 # agy2api - Launch background daemon
+# Re-exec with bash if not already running under bash
+if [ -z "$BASH_VERSION" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    fi
+fi
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,20 +29,21 @@ export PORT="${PORT:-7862}"
 export HOST="${HOST:-127.0.0.1}"
 
 echo "[agy2api] Starting server in background..."
-python3 -c "
+python3 - "$LOG_FILE" "$PID_FILE" "$DIR" << 'PYEOF'
 import subprocess, os, sys
-with open('$LOG_FILE', 'a') as log:
+log_file, pid_file, dir_path = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(log_file, 'a') as log:
     proc = subprocess.Popen(
-        [sys.executable, '$DIR/server.py'],
-        cwd='$DIR',
+        [sys.executable, os.path.join(dir_path, 'server.py')],
+        cwd=dir_path,
         stdin=subprocess.DEVNULL,
         stdout=log,
         stderr=log,
         start_new_session=True,
     )
-    with open('$PID_FILE', 'w') as f:
+    with open(pid_file, 'w') as f:
         f.write(str(proc.pid))
-"
+PYEOF
 
 for i in {1..20}; do
     if curl -s -H "Authorization: Bearer $AGY2API_KEY" "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1; then

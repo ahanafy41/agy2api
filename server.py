@@ -94,6 +94,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             removed = sweep_orphan_sidecars()
             if removed:
                 logger.info("startup: swept %d orphan SQLite sidecar file(s)", removed)
+        _cleanup_old_media_cache(3600)
     except Exception as exc:  # never block startup on housekeeping
         logger.warning("startup sweep failed: %s", exc)
 
@@ -114,6 +115,10 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
                     logger.info("shutdown (stateful): wiped %d conversation db(s)", removed)
             except Exception as exc:  # never block shutdown on housekeeping
                 logger.warning("shutdown sweep failed: %s", exc)
+        try:
+            _cleanup_old_media_cache(3600)
+        except Exception:
+            pass
 
 
 app = FastAPI(title="agy2api", version="1.1.0", lifespan=_lifespan)
@@ -527,13 +532,15 @@ async def gemini_generate_content(model_action: str, request: Request):
         except Exception as exc:
             logger.warning("gemini-compat warm-worker failed, fallback: %s", exc)
             try:
-                answer, _ = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
+                res = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
+                answer = res.response.answer
             except Exception as e2:
                 logger.error("fallback _execute_run also failed: %s", e2)
                 answer = "عذراً يا ريس، حدث ضغط مؤقت على سيرفر الذكاء الاصطناعي (503 Unavailable). يرجى تكرار المحاولة في لحظات."
     else:
         try:
-            answer, _ = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
+            res = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
+            answer = res.response.answer
         except Exception as e2:
             logger.error("_execute_run failed: %s", e2)
             answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."

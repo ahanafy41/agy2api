@@ -22,13 +22,15 @@ import logging
 import os
 import shutil
 import signal
+import subprocess
 import time
 from pathlib import Path
 
 logger = logging.getLogger("agy2api")
 
-ISOLATED_HOME = Path.home() / "agy2api" / "isolated_home"
-EMPTY_WS = Path.home() / "agy2api" / "empty_ws"
+REPO_ROOT = Path(__file__).resolve().parent
+ISOLATED_HOME = REPO_ROOT / "isolated_home"
+EMPTY_WS = REPO_ROOT / "empty_ws"
 
 
 class WarmAgyWorker:
@@ -127,17 +129,38 @@ class WarmAgyWorker:
     async def _kill_process(self, proc: asyncio.subprocess.Process | None, cid: str | None = None) -> None:
         if not proc:
             return
-        try:
-            pgid = os.getpgid(proc.pid)
-            os.killpg(pgid, signal.SIGTERM)
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
-        except Exception:
+        if os.name == "nt":
             try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGKILL)
+                subprocess.run(
+                    ["taskkill", "/pid", str(proc.pid), "/t", "/f"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
             except Exception:
                 try:
                     proc.kill()
+                except Exception:
+                    pass
+        else:
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except Exception:
+                try:
+                    pgid = os.getpgid(proc.pid)
+                    os.killpg(pgid, signal.SIGKILL)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+
+        for s in (proc.stdin, proc.stdout, proc.stderr):
+            if s:
+                try:
+                    s.close()
                 except Exception:
                     pass
 

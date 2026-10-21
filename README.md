@@ -181,7 +181,7 @@ Run the included regression and verification test suite:
 python run_tests.py -v
 ```
 
-All 21 unit tests verify Pydantic models, CLI wrappers, protocol encoders, fake-stream helpers, and stateful session logic.
+All 25 unit tests verify Pydantic models, CLI wrappers, protocol encoders, fake-stream helpers, stateful session logic, and multimodal caching.
 
 ---
 

@@ -1,5 +1,11 @@
-#!/data/data/com.termux/files/usr/bin/env bash
+#!/bin/sh
 # agy2api - Startup script for Linux / Android (Termux) / macOS
+# Re-exec with bash if not already running under bash
+if [ -z "$BASH_VERSION" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    fi
+fi
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

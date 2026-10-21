@@ -308,5 +308,60 @@ class WindowsCommandLineGuardTests(unittest.TestCase):
         )
 
 
+class MultimodalAndMediaCacheTests(unittest.TestCase):
+    """Test multimodal content parsing and media cache lifecycle."""
+
+    def test_save_base64_media_creates_ephemeral_file(self) -> None:
+        """Base64 data URI must decode and save to MEDIA_CACHE_DIR with proper permissions."""
+        from server import MEDIA_CACHE_DIR, _cleanup_old_media_cache, _save_base64_media
+
+        # 1x1 transparent PNG base64
+        sample_b64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+        saved_path = _save_base64_media(sample_b64, "image/png")
+        self.assertIsNotNone(saved_path)
+        self.assertTrue(saved_path.exists())
+        self.assertTrue(saved_path.name.endswith(".png"))
+        self.assertGreater(saved_path.stat().st_size, 0)
+
+        # Cleanup
+        saved_path.unlink(missing_ok=True)
+
+    def test_cleanup_old_media_cache_removes_expired_files(self) -> None:
+        """_cleanup_old_media_cache must remove files older than max_age_seconds."""
+        from server import MEDIA_CACHE_DIR, _cleanup_old_media_cache
+
+        stale_file = MEDIA_CACHE_DIR / "stale_test_file.jpg"
+        stale_file.write_bytes(b"dummy")
+        # Set mtime to 3 hours ago
+        three_hours_ago = time.time() - 10800
+        os.utime(stale_file, (three_hours_ago, three_hours_ago))
+
+        _cleanup_old_media_cache(max_age_seconds=7200)
+        self.assertFalse(stale_file.exists(), "Stale media cache file should have been deleted")
+
+    def test_content_to_text_parses_multimodal_list(self) -> None:
+        """_content_to_text must extract text and media references properly."""
+        from server import _content_to_text
+
+        content_list = [
+            {"type": "text", "text": "Analyze this:"},
+            {"type": "image_url", "image_url": {"url": "http://example.com/test.jpg"}},
+        ]
+        result = _content_to_text(content_list)
+        self.assertIn("Analyze this:", result)
+        self.assertIn("http://example.com/test.jpg", result)
+
+
+class WarmWorkerEnvironmentTests(unittest.TestCase):
+    """Test warm worker sandbox path isolation."""
+
+    def test_worker_paths_contained_within_repo(self) -> None:
+        """ISOLATED_HOME and EMPTY_WS must reside within the agy2api repository root."""
+        from warm_worker import EMPTY_WS, ISOLATED_HOME, REPO_ROOT
+
+        self.assertEqual(ISOLATED_HOME.parent, REPO_ROOT)
+        self.assertEqual(EMPTY_WS.parent, REPO_ROOT)
+
+
 if __name__ == "__main__":
     unittest.main()

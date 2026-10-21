@@ -1,5 +1,11 @@
-#!/data/data/com.termux/files/usr/bin/env bash
+#!/bin/sh
 # agy2api - Stop background daemon
+# Re-exec with bash if not already running under bash
+if [ -z "$BASH_VERSION" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    fi
+fi
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$DIR/agy2api.pid"
 
