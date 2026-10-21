@@ -138,6 +138,9 @@ def _run_agy_once(
         ]
         # Lesson from relay.mjs: explicitly anchor workspace directory via absolute path
         command.extend(["--add-dir", str(Path(workdir).resolve())])
+        media_cache = Path(__file__).resolve().parent / "media_cache"
+        if media_cache.exists():
+            command.extend(["--add-dir", str(media_cache.resolve())])
         if settings.sandbox:
             command.append("--sandbox")
         if settings.dangerously_skip_permissions:

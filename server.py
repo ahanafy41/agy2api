@@ -31,6 +31,11 @@ from warm_worker import warm_worker
 from fake_stream import make_heartbeat, sse_event, stream_chunks
 from models import ChatCompletionRequest, ModelInfo, ModelList
 from session_store import SessionStore, fingerprint
+from youtube_handler import (
+    extract_youtube_urls,
+    is_visual_request,
+    process_youtube_request,
+)
 
 
 logger = logging.getLogger("agy2api")
@@ -271,6 +276,19 @@ async def chat_completions(
     agy_model, agy_effort = resolve_model(model, request_body.reasoning_effort)
     prompt, resume_id, sigs = _plan_request(request_body.messages)
     keep = settings.stateful
+
+    # YouTube URL handling & Ephemeral Cleanup
+    yt_urls = extract_youtube_urls(prompt)
+    ephemeral_files: list[Path] = []
+    if yt_urls:
+        augmented_prompt_parts = [prompt]
+        for y_url in yt_urls:
+            yt_prompt, temp_file = process_youtube_request(y_url, prompt, MEDIA_CACHE_DIR)
+            if temp_file:
+                ephemeral_files.append(temp_file)
+            augmented_prompt_parts.append(yt_prompt)
+        prompt = "\n\n".join(augmented_prompt_parts)
+
     logger.info(
         "request: model=%s (agy=%s) effort=%s (agy_effort=%s) stream=%s messages=%d prompt_chars=%d resume=%s",
         model, agy_model, request_body.reasoning_effort, agy_effort, request_body.stream,
@@ -279,59 +297,67 @@ async def chat_completions(
 
     if request_body.stream:
         return StreamingResponse(
-            _stream_response(prompt, model, agy_model, request, resume_id, keep, sigs, agy_effort),
+            _stream_response(prompt, model, agy_model, request, resume_id, keep, sigs, agy_effort, ephemeral_files),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    # Warm Worker: 100% Official agy binary kept warm in stream-json mode
-    if not request_body.stream and settings.warm_worker and not settings.stateful:
-        try:
-            started = time.time()
-            warm_text = await warm_worker.run_turn(prompt, agy_model)
-            logger.info(
-                "ok (warm-worker): model=%s answer_chars=%d in %.2fs",
-                model,
-                len(warm_text),
-                time.time() - started,
-            )
-            return JSONResponse(
-                content=build_completion_response(
-                    answer=warm_text,
-                    reasoning="",
-                    model=model,
-                    finish_reason="stop",
-                )
-            )
-        except Exception as exc:
-            logger.warning("warm-worker failed; falling back to agy CLI: %s", exc)
-
-    started = time.time()
     try:
-        result = await _execute_run(prompt, agy_model, resume_id, keep, agy_effort)
-    except Exception as exc:
-        _forget_session(resume_id)
-        logger.error(
-            "FAILED (non-stream): model=%s prompt_chars=%d after %.1fs -> %s",
-            model, len(prompt), time.time() - started, exc, exc_info=True,
-        )
-        return _error_response(str(exc), status_code=500)
+        # Warm Worker: 100% Official agy binary kept warm in stream-json mode
+        if not request_body.stream and settings.warm_worker and not settings.stateful:
+            try:
+                started = time.time()
+                warm_text = await warm_worker.run_turn(prompt, agy_model)
+                logger.info(
+                    "ok (warm-worker): model=%s answer_chars=%d in %.2fs",
+                    model,
+                    len(warm_text),
+                    time.time() - started,
+                )
+                return JSONResponse(
+                    content=build_completion_response(
+                        answer=warm_text,
+                        reasoning="",
+                        model=model,
+                        finish_reason="stop",
+                    )
+                )
+            except Exception as exc:
+                logger.warning("warm-worker failed; falling back to agy CLI: %s", exc)
 
-    _record_session(Path(result.db_path).stem, sigs)
-    fr = "length" if result.response.truncated else "stop"
-    logger.info(
-        "ok (non-stream): model=%s answer_chars=%d reasoning_chars=%d truncated=%s db=%s resume=%s %.1fs",
-        model, len(result.response.answer), len(result.response.reasoning),
-        result.response.truncated, result.db_path.name, bool(resume_id), time.time() - started,
-    )
-    return JSONResponse(
-        content=build_completion_response(
-            answer=result.response.answer,
-            reasoning=result.response.reasoning,
-            model=model,
-            finish_reason=fr,
+        started = time.time()
+        try:
+            result = await _execute_run(prompt, agy_model, resume_id, keep, agy_effort)
+        except Exception as exc:
+            _forget_session(resume_id)
+            logger.error(
+                "FAILED (non-stream): model=%s prompt_chars=%d after %.1fs -> %s",
+                model, len(prompt), time.time() - started, exc, exc_info=True,
+            )
+            return _error_response(str(exc), status_code=500)
+
+        _record_session(Path(result.db_path).stem, sigs)
+        fr = "length" if result.response.truncated else "stop"
+        logger.info(
+            "ok (non-stream): model=%s answer_chars=%d reasoning_chars=%d truncated=%s db=%s resume=%s %.1fs",
+            model, len(result.response.answer), len(result.response.reasoning),
+            result.response.truncated, result.db_path.name, bool(resume_id), time.time() - started,
         )
-    )
+        return JSONResponse(
+            content=build_completion_response(
+                answer=result.response.answer,
+                reasoning=result.response.reasoning,
+                model=model,
+                finish_reason=fr,
+            )
+        )
+    finally:
+        for ef in ephemeral_files:
+            try:
+                ef.unlink(missing_ok=True)
+                logger.info("Cleaned up ephemeral video %s", ef)
+            except Exception:
+                pass
 
 
 @app.get("/health")
@@ -429,17 +455,39 @@ async def gemini_generate_content(model_action: str, request: Request):
         body = {}
 
     prompt_parts: list[str] = []
+    ephemeral_files: list[Path] = []
     if "system_instruction" in body:
         sys_parts = body["system_instruction"].get("parts", [])
         for sp in sys_parts:
             if "text" in sp:
                 prompt_parts.append(f"System: {sp['text']}")
 
+    # Extract overall user text context for YouTube analysis
+    user_context = " ".join([
+        p["text"]
+        for c in body.get("contents", [])
+        for p in c.get("parts", [])
+        if isinstance(p, dict) and "text" in p
+    ]).strip()
+
     has_image = False
     for content in body.get("contents", []):
         for part in content.get("parts", []):
             if "text" in part:
-                prompt_parts.append(part["text"])
+                t_val = part["text"]
+                prompt_parts.append(t_val)
+                yt_urls = extract_youtube_urls(t_val)
+                has_file_data_yt = any(
+                    isinstance(p, dict) and "file_data" in p and any(u in str(p.get("file_data", {}).get("file_uri", "")) for u in yt_urls)
+                    for c in body.get("contents", [])
+                    for p in c.get("parts", [])
+                )
+                if yt_urls and not has_file_data_yt:
+                    for y_url in yt_urls:
+                        yt_prompt, yt_file = process_youtube_request(y_url, user_context or t_val, MEDIA_CACHE_DIR)
+                        if yt_file:
+                            ephemeral_files.append(yt_file)
+                        prompt_parts.append(yt_prompt)
             elif "inline_data" in part:
                 idat = part["inline_data"]
                 mime = idat.get("mime_type", "image/jpeg")
@@ -475,10 +523,10 @@ async def gemini_generate_content(model_action: str, request: Request):
                 f_mime = str(fdat.get("mime_type", "")).strip().lower()
 
                 if "youtube.com" in f_uri or "youtu.be" in f_uri:
-                    prompt_parts.append(
-                        f"رابط فيديو يوتيوب للتحليل:\n{f_uri}\n"
-                        "المطلوب: فحص وتحليل هذا الفيديو بدقة، واستخراج عنوانه وموضوعه وتفاصيل محتواه، والإجابة عن طلب المستخدم."
-                    )
+                    yt_prompt, yt_file = process_youtube_request(f_uri, user_context or "فحص وتحليل هذا الفيديو بدقة والإجابة عن طلب المستخدم", MEDIA_CACHE_DIR)
+                    if yt_file:
+                        ephemeral_files.append(yt_file)
+                    prompt_parts.append(yt_prompt)
                 elif f_uri.startswith("http://") or f_uri.startswith("https://"):
                     prompt_parts.append(
                         f"رابط ويب مرفق للتحليل:\n{f_uri}\nنوع المحتوى: {f_mime}\n"
@@ -522,47 +570,55 @@ async def gemini_generate_content(model_action: str, request: Request):
 
     logger.info("gemini-compat: model=%s (resolved=%s) prompt_chars=%d", model_id, resolved_model, len(full_prompt))
 
-    answer = ""
-    if settings.warm_worker and not settings.stateful:
-        try:
-            started = time.time()
-            answer = await warm_worker.run_turn(full_prompt, resolved_model)
-            logger.info("ok (gemini-compat warm-worker): in %.2fs", time.time() - started)
-        except Exception as exc:
-            logger.warning("gemini-compat warm-worker failed, fallback: %s", exc)
+    try:
+        answer = ""
+        if settings.warm_worker and not settings.stateful:
+            try:
+                started = time.time()
+                answer = await warm_worker.run_turn(full_prompt, resolved_model)
+                logger.info("ok (gemini-compat warm-worker): in %.2fs", time.time() - started)
+            except Exception as exc:
+                logger.warning("gemini-compat warm-worker failed, fallback: %s", exc)
+                try:
+                    res = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
+                    answer = res.response.answer
+                except Exception as e2:
+                    logger.error("fallback _execute_run also failed: %s", e2)
+                    answer = "عذراً يا ريس، حدث ضغط مؤقت على سيرفر الذكاء الاصطناعي (503 Unavailable). يرجى تكرار المحاولة في لحظات."
+        else:
             try:
                 res = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
                 answer = res.response.answer
             except Exception as e2:
-                logger.error("fallback _execute_run also failed: %s", e2)
-                answer = "عذراً يا ريس، حدث ضغط مؤقت على سيرفر الذكاء الاصطناعي (503 Unavailable). يرجى تكرار المحاولة في لحظات."
-    else:
-        try:
-            res = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
-            answer = res.response.answer
-        except Exception as e2:
-            logger.error("_execute_run failed: %s", e2)
-            answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
+                logger.error("_execute_run failed: %s", e2)
+                answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
 
-    return JSONResponse(
-        content={
-            "candidates": [
-                {
-                    "content": {
-                        "parts": [{"text": answer}],
-                        "role": "model",
-                    },
-                    "finishReason": "STOP",
-                    "index": 0,
-                }
-            ],
-            "usageMetadata": {
-                "promptTokenCount": 0,
-                "candidatesTokenCount": len(answer),
-                "totalTokenCount": len(answer),
-            },
-        }
-    )
+        return JSONResponse(
+            content={
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [{"text": answer}],
+                            "role": "model",
+                        },
+                        "finishReason": "STOP",
+                        "index": 0,
+                    }
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 0,
+                    "candidatesTokenCount": len(answer),
+                    "totalTokenCount": len(answer),
+                },
+            }
+        )
+    finally:
+        for ef in ephemeral_files:
+            try:
+                ef.unlink(missing_ok=True)
+                logger.info("Cleaned up ephemeral Gemini video %s", ef)
+            except Exception:
+                pass
 
 
 async def _stream_response(
@@ -574,6 +630,7 @@ async def _stream_response(
     keep: bool = False,
     sigs: list[str] | None = None,
     effort: str | None = None,
+    cleanup_files: list[Path] | None = None,
 ) -> AsyncIterator[bytes]:
     started = time.time()
     task = asyncio.create_task(_execute_run(prompt, agy_model, resume_id, keep, effort))
@@ -609,6 +666,14 @@ async def _stream_response(
         )
         yield sse_event({"error": {"message": str(exc), "type": "agy_error"}})
         yield sse_event("[DONE]")
+    finally:
+        if cleanup_files:
+            for f in cleanup_files:
+                try:
+                    f.unlink(missing_ok=True)
+                    logger.info("Cleaned up ephemeral video %s", f)
+                except Exception:
+                    pass
 
 
 def format_messages(messages: list[Any]) -> str:

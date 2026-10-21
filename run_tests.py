@@ -363,5 +363,97 @@ class WarmWorkerEnvironmentTests(unittest.TestCase):
         self.assertEqual(EMPTY_WS.parent, REPO_ROOT)
 
 
+class YouTubeHandlerTests(unittest.TestCase):
+    """Test YouTube URL extraction, visual request detection, and two-tier processing."""
+
+    def test_extract_youtube_urls(self) -> None:
+        """extract_youtube_urls must find and normalize standard, short, and shorts URLs."""
+        from youtube_handler import extract_youtube_urls
+
+        text = (
+            "Check these: https://www.youtube.com/watch?v=dQw4w9WgXcQ and "
+            "https://youtu.be/XmLthH5jlTI?si=abc and "
+            "https://youtube.com/shorts/abcd1234efg in one prompt."
+        )
+        urls = extract_youtube_urls(text)
+        self.assertEqual(len(urls), 3)
+        self.assertIn("https://www.youtube.com/watch?v=dQw4w9WgXcQ", urls)
+        self.assertIn("https://www.youtube.com/watch?v=XmLthH5jlTI", urls)
+        self.assertIn("https://www.youtube.com/watch?v=abcd1234efg", urls)
+
+    def test_is_visual_request_detection(self) -> None:
+        """is_visual_request must accurately distinguish visual scene descriptions from text queries."""
+        from youtube_handler import is_visual_request
+
+        visual_prompts = [
+            "أنت عين لشخص كفيف. صِف باختصار شديد أهم ما يحدث في بداية هذا الفيديو",
+            "صف لي المشهد بصرياً وشايف إيه في الشاشة",
+            "What does the visual scene look like?",
+            "Describe the frame and what they are wearing",
+        ]
+        for vp in visual_prompts:
+            self.assertTrue(is_visual_request(vp), f"Should detect visual request for: {vp}")
+
+        non_visual_prompts = [
+            "ما هو عنوان هذا الفيديو؟",
+            "لخص لي الأفكار الرئيسية في المحادثة",
+            "What are the key points mentioned in the audio?",
+        ]
+        for nvp in non_visual_prompts:
+            self.assertFalse(is_visual_request(nvp), f"Should not detect visual request for: {nvp}")
+
+    def test_process_youtube_request_tier1_transcript(self) -> None:
+        """When transcript exists and query is non-visual, process_youtube_request formats prompt without video download."""
+        from unittest.mock import patch
+        from youtube_handler import process_youtube_request
+
+        fake_meta = {
+            "title": "Test Video Title",
+            "description": "Test Description",
+            "duration": 120,
+            "transcript": "Hello world, this is a spoken transcript.",
+        }
+
+        with patch("youtube_handler.fetch_youtube_metadata_and_transcript", return_value=fake_meta):
+            prompt, temp_file = process_youtube_request(
+                "https://youtu.be/test1234567",
+                "لخص الفيديو في ثلاث نقاط",
+                Path(tempfile.gettempdir()),
+            )
+            self.assertIsNone(temp_file)
+            self.assertIn("Test Video Title", prompt)
+            self.assertIn("Hello world, this is a spoken transcript.", prompt)
+            self.assertIn("لخص الفيديو في ثلاث نقاط", prompt)
+
+    def test_process_youtube_request_tier2_visual_video(self) -> None:
+        """When query is visual, process_youtube_request triggers micro-video download and instructs read_file."""
+        from unittest.mock import patch
+        from youtube_handler import process_youtube_request
+
+        fake_meta = {
+            "title": "Visual Video Title",
+            "description": "Visual Description",
+            "duration": 60,
+            "transcript": "Audio text here.",
+        }
+        fake_video_path = Path(tempfile.gettempdir()) / "fake_video.mp4"
+        fake_video_path.touch()
+
+        try:
+            with patch("youtube_handler.fetch_youtube_metadata_and_transcript", return_value=fake_meta), \
+                 patch("youtube_handler.download_micro_video", return_value=fake_video_path):
+                prompt, temp_file = process_youtube_request(
+                    "https://youtu.be/test1234567",
+                    "أنت عين لكفيف صف المشهد بصريا في بداية الفيديو",
+                    Path(tempfile.gettempdir()),
+                )
+                self.assertEqual(temp_file, fake_video_path)
+                self.assertIn("read_file", prompt)
+                self.assertIn(str(fake_video_path), prompt)
+                self.assertIn("كعين لشخص كفيف", prompt)
+        finally:
+            fake_video_path.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     unittest.main()

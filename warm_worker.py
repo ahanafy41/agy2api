@@ -31,6 +31,8 @@ logger = logging.getLogger("agy2api")
 REPO_ROOT = Path(__file__).resolve().parent
 ISOLATED_HOME = REPO_ROOT / "isolated_home"
 EMPTY_WS = REPO_ROOT / "empty_ws"
+MEDIA_CACHE_DIR = REPO_ROOT / "media_cache"
+MEDIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class WarmAgyWorker:
@@ -87,6 +89,7 @@ class WarmAgyWorker:
             "--disable-slash-commands",
             "--model", model,
             "--add-dir", str(EMPTY_WS),
+            "--add-dir", str(MEDIA_CACHE_DIR),
         ]
 
         logger.info("WarmAgyWorker: Starting official agy binary (model: %s)...", model)
