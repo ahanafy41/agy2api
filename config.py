@@ -183,26 +183,26 @@ class Settings:
             "models",
             _csv_env("AGY_MODELS", list(MODEL_MAP.keys())),
         )
-        # In stateful mode, redirect conversations_dir into the isolated home
-        # so agy reads/writes only there (and our sweeps stay self-contained).
-        if self.stateful:
-            sandbox_conv = (
-                self.stateful_home / ".gemini" / "antigravity-cli" / "conversations"
-            )
-            object.__setattr__(self, "conversations_dir", sandbox_conv)
+        # Redirect conversations_dir into isolated_home so agy reads/writes only there
+        sandbox_conv = (
+            Path(__file__).resolve().parent / "isolated_home" / ".gemini" / "antigravity-cli" / "conversations"
+        )
+        sandbox_conv.mkdir(parents=True, exist_ok=True)
+        object.__setattr__(self, "conversations_dir", sandbox_conv)
 
     def agy_env(self) -> dict[str, str]:
         """Environment dict to pass to the agy subprocess.
 
-        In stateful mode, set USERPROFILE to the isolated home so agy's whole
-        data tree (conversations, brain, auth) lives there, fully separated
-        from the user's real ~/.gemini. In stateless mode, pass the current
-        environment unchanged.
+        Always isolate agy into isolated_home so external processes in $HOME
+        never overwrite our dedicated account token or cross-pollute session databases.
         """
-        if not self.stateful:
-            return os.environ.copy()
+        iso_home = Path(__file__).resolve().parent / "isolated_home"
         env = os.environ.copy()
-        env["USERPROFILE"] = str(self.stateful_home)
+        env["HOME"] = str(iso_home)
+        env["USERPROFILE"] = str(iso_home)
+        env["AGY_AUTO_UPDATE"] = "0"
+        env["AGY_NO_UPDATE_CHECK"] = "1"
+        env["GODEBUG"] = "netdns=cgo"
         return env
 
 

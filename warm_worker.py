@@ -62,7 +62,8 @@ class WarmAgyWorker:
         target_dir = ISOLATED_HOME / ".gemini" / "antigravity-cli"
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        token_src = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+        dedicated_token = Path(__file__).resolve().parent / "token_884.json"
+        token_src = dedicated_token if dedicated_token.exists() else (Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token")
         token_dst = target_dir / "antigravity-oauth-token"
         if token_src.exists():
             shutil.copy2(token_src, token_dst)
@@ -170,6 +171,9 @@ class WarmAgyWorker:
         if cid:
             brain_dir = ISOLATED_HOME / ".gemini" / "antigravity-cli" / "brain" / cid
             shutil.rmtree(brain_dir, ignore_errors=True)
+            conv_dir = ISOLATED_HOME / ".gemini" / "antigravity-cli" / "conversations"
+            for ext in ["", "-wal", "-shm"]:
+                (conv_dir / f"{cid}.db{ext}").unlink(missing_ok=True)
 
     async def start(self) -> None:
         if self.process is not None and self.process.returncode is None:

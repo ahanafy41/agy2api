@@ -15,6 +15,7 @@ srv.err
 
 # Local conversation databases (never commit — contain prompts/responses)
 *.db
+token_*.json
 
 # Stateful-mode isolated agy home (contains OAuth/auth state + conversations)
 stateful_home/
