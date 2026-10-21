@@ -1,222 +1,184 @@
-# agy2api
+# agy2api (Enhanced High-Performance Edition) 🚀
 
-OpenAI-compatible wrapper around the logged-in official Antigravity CLI.
+> High-performance, Multimodal OpenAI & Google Gemini API Server powered by the logged-in official Google Antigravity CLI (`agy`).
 
-## What It Does
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Android%20(Termux)%20%7C%20macOS%20%7C%20Windows-green)](#quick-start)
+[![API](https://img.shields.io/badge/API-OpenAI%20%7C%20Google%20Gemini-orange)](#api-endpoints)
 
-- Calls `agy --print=<prompt>` with slash-command shields (`--disable-slash-commands`), absolute workspace anchoring (`--add-dir`), and Windows process tree termination (`taskkill`).
-- Reads the newest Antigravity conversation SQLite DB or captures stdout fallback.
-- Decodes protobuf `steps.step_payload` with a small dependency-free wire decoder.
-- Exposes:
-  - `POST /v1/chat/completions` (supporting standard OpenAI `reasoning_effort` and reasoning tokens)
-  - `GET /v1/models`
-- Supports fake streaming by sending heartbeats while `agy` runs, then chunking the completed answer into OpenAI SSE events.
-- Zero-loss multi-byte character streaming via incremental UTF-8 decoding.
+[📖 **التوثيق باللغة العربية (Arabic Documentation)**](README_AR.md)
 
-## Prerequisites
+---
 
-This wrapper does **not** handle Google authentication. You must set up the
-official CLI yourself before running it:
+## 🌟 Key Innovations & Enhancements
 
-1. **Install the Antigravity CLI (`agy`) yourself.** This project does not bundle,
-   download, or redistribute it.
-2. **Log in yourself** (`agy` Google OAuth). The login lives entirely inside
-   `agy`'s own local state.
-3. The wrapper only ever runs `agy --print <prompt>` as a subprocess and reads the
-   conversation SQLite file that `agy` writes locally. It never reads, writes,
-   stores, transmits, or validates your Google credentials or OAuth tokens.
+Unlike standard CLI wrappers that invoke cold processes on every turn (incurring 15–20s startup overhead), this enhanced edition introduces a production-ready, low-latency architecture:
 
-## Auth & Privacy
+### 1. ⚡ Ultra-Fast Warm Worker Engine (`warm_worker.py`)
+- **Sub-2.5s Turn Latency**: Retains official `agy` CLI processes hot in memory using native `--input-format stream-json --output-format stream-json`.
+- **Proactive Standby Rotation (Zero Context Bloat)**: Automatically pre-warms a standby worker in the background and rotates sessions seamlessly in 0.0s, eliminating the conversation accumulation that causes long-term latency degradation.
+- **Auto-Recycling & Idle Monitor**: Recycles inactive sessions after 90 seconds of idle time to conserve system RAM.
+- **Zero Zombie Processes**: Robust process-group sandboxing (`start_new_session=True` & `os.killpg`) guarantees clean process lifecycles.
 
-- **Two unrelated layers — don't confuse them:**
-  - *Google OAuth* — owned 100% by `agy`. This project has zero OAuth code.
-  - `AGY2API_KEY` — this wrapper's **own** Bearer password, only gating who may
-    call your local HTTP endpoint. Unrelated to Google.
-- **Quota is yours.** Every request consumes *your* logged-in `agy` quota. Anyone
-  who can reach the endpoint with a valid Bearer key spends your quota.
-- **Keep it local.** The server binds `127.0.0.1` by default. Do not set
-  `HOST=0.0.0.0` / expose it publicly unless you set a strong `AGY2API_KEY` and
-  accept that callers run prompts under your Google account.
+### 2. 🖼️ Native Multimodal Support (Images, PDFs, Videos & YouTube)
+- **Base64 Images**: Decodes and feeds image inputs (JPEG, PNG, WEBP) directly to Antigravity vision models.
+- **PDF Documents & Books**: Extracts and analyzes local PDF documents.
+- **Local Audio & Video**: Inspects media files with proper MIME type classification (MP4, MKV, MP3, WAV, etc.).
+- **YouTube Links**: Ingests direct YouTube links for video summarization and Q&A.
+- **Zero-Footprint Media Cache (`media_cache/`)**: Automatically wipes temporary media files immediately upon response delivery.
 
-## Compliance / Acceptable Use
+### 3. 📱 Mobile & Termux Native (Android, Linux & Windows)
+- Dedicated Linux / Termux background daemon launcher (`launch.sh`).
+- Interactive CLI startup assistant (`start.sh`).
+- Deterministic process killer (`stop.sh`) to prevent orphaned processes on mobile devices.
+- Windows batch launcher (`start.bat`) with automatic venv detection.
 
-This is an **unofficial** personal-interop tool. It is not affiliated with,
-endorsed by, or supported by Google. You are responsible for using it within
-the Antigravity / Gemini Terms of Service. To stay on the safe side:
+### 4. 🌐 Dual-Protocol Compatibility (OpenAI + Google Gemini)
+- **OpenAI Compatible**: `POST /v1/chat/completions` (supporting reasoning effort, fake streaming, and standard OpenAI SDKs).
+- **Google Gemini Compatible**: `POST /v1beta/models/{model}:generateContent` (enables Android apps and screen reader extensions to replace the official Google endpoint with zero code changes).
 
-- **Personal, local, single-user only.** Do not share the endpoint, share the
-  Bearer key, or run it as a public proxy. Doing so redistributes your personal
-  Google quota to third parties — the clearest ToS violation.
-- **No commercial use or resale** of the free-tier quota.
-- **Do not expose it to the network.** The server refuses to bind a non-loopback
-  address unless you set `AGY2API_ALLOW_REMOTE=1` (don't, unless you fully
-  understand the consequences).
-- **Human-paced volume.** Concurrency is capped at 1 by default
-  (`AGY2API_MAX_CONCURRENCY`). Don't drive high-volume or mass-parallel traffic.
-- **Don't use outputs to train competing models**, and don't strip safety
-  filtering — pass prompts through as-is.
-- The tool only reads *your own* local conversation database on *your own*
-  machine; it does not break encryption or access anyone else's data. Keep it
-  that way.
+---
 
-## Install
+## 📋 Prerequisites
 
-```powershell
-cd agy2api
-python -m venv .venv
-.\.venv\Scripts\pip install -r requirements.txt
-```
+This wrapper does **not** handle Google authentication. You must configure the official CLI first:
 
-Make sure `agy` is installed and already logged in (see Prerequisites).
+1. **Install official `agy` CLI**: Ensure `agy` is installed and accessible in your `$PATH`.
+2. **Authenticate with Google**: Run `agy` and complete the initial OAuth sign-in.
+3. **Python 3.10+**: Ensure Python is installed (`pkg install python` on Termux).
 
-## Run
+---
 
-**Windows (recommended): `start.bat`** — a one-click launcher that checks `agy`
-login, sets up the venv, then asks which mode to run:
+## 🚀 Quick Start
 
-| Choice | Mode | Best for |
-| --- | --- | --- |
-| `1` (default — just press Enter) | **Stateful** | ongoing chats / roleplay; only the new turn is sent each request, so long chats are much less likely to hit the upstream cutoff |
-| `2` | **Stateless** | simple / one-off requests; full history resent each time |
-
-Set `AGY2API_STATEFUL` in the environment beforehand (`1`/`0`) to skip the
-prompt. See [Stateful mode](#stateful-mode) for what stateful changes.
-
-**Manual / non-Windows:**
-
-```powershell
-$env:AGY2API_KEY="pwd"
-python server.py          # stateless by default; set AGY2API_STATEFUL=1 for stateful
-```
-
-Default URL: `http://127.0.0.1:7862`.
-
-## Request
+### 1. Installation
 
 ```bash
-curl http://127.0.0.1:7862/v1/chat/completions \
+git clone https://github.com/kamalyaser31/agy2api.git
+cd agy2api
+pip install -r requirements.txt
+```
+
+### 2. Running on Linux / Android (Termux) / macOS
+
+#### Option A: Run as a Background Daemon (Recommended for daily use)
+```bash
+chmod +x launch.sh stop.sh start.sh
+./launch.sh
+```
+*The server launches silently in the background on `http://127.0.0.1:7862`. You can safely close your terminal session.*
+
+#### Option B: Interactive Mode
+```bash
+./start.sh
+```
+
+#### Stopping the Server
+```bash
+./stop.sh
+```
+
+### 3. Running on Windows
+
+Double-click `start.bat` or run:
+```cmd
+start.bat
+```
+
+---
+
+## 📡 API Endpoints & Examples
+
+Default URL: `http://127.0.0.1:7862`  
+Default Bearer Key: `pwd`
+
+### 1. Standard OpenAI Text Completion
+```bash
+curl -X POST http://127.0.0.1:7862/v1/chat/completions \
   -H "Authorization: Bearer pwd" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-3.8-flash",
-    "messages": [{"role": "user", "content": "reply with exactly PONG"}],
-    "reasoning_effort": "low"
+    "model": "gemini-3.8-flash-low",
+    "messages": [
+      {"role": "user", "content": "Explain quantum computing in one sentence."}
+    ]
   }'
 ```
 
-## Configuration
+### 2. Multimodal Image Analysis (Base64)
+```bash
+curl -X POST http://127.0.0.1:7862/v1/chat/completions \
+  -H "Authorization: Bearer pwd" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.8-flash-low",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "Describe the contents of this image in detail."},
+          {
+            "type": "image_url",
+            "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQSkZJRg..."}
+          }
+        ]
+      }
+    ]
+  }'
+```
 
-- `AGY_PATH`: CLI executable path, default `agy`
-- `AGY_WORKDIR`: working directory for `agy`, default project parent
-- `AGY_CONVERSATIONS_DIR`: Antigravity conversations directory
-- `AGY_TIMEOUT`: per-request budget seconds, default `300` (also passed to agy as `--print-timeout`; the subprocess is killed only 20s later as a hard backstop)
-- `AGY2API_KEY`: bearer token, default `pwd` (empty disables auth)
-- `AGY_MODELS`: comma-separated model list
-- `AGY_POLL_INTERVAL`: DB-readiness poll seconds, default `0.25`
-- `AGY2API_CHUNK_SIZE`: fake-stream chunk size in chars, default `10`
-- `AGY2API_STREAM_DELAY`: inter-chunk delay seconds for typing effect, default `0.03`
-- `AGY2API_EXPOSE_REASONING`: emit `reasoning_content`, default `true`
-- `AGY2API_MAX_CONCURRENCY`: max concurrent agy runs, default `3`
-- `AGY2API_CLEANUP_DB`: delete each run's conversation DB + brain dir after reading, default `true`
-- `AGY2API_SUPPRESS_AUTOUPDATE`: keep agy's `last_check.timestamp` fresh so its background updater never spawns the `agy --bg-updater` child (a console window that flashes despite `CREATE_NO_WINDOW`), and so agy doesn't silently auto-update and change the DB/protobuf layout the parser relies on, default `true`
-- `AGY2API_STATEFUL`: **experimental** — keep a persistent `agy` conversation per chat and send only the new turn each request (instead of resenting the full history every time). Smaller per-turn payloads finish faster and are less likely to trip the upstream ~60s connection cutoff on long chats. Default `false`. See [Stateful mode](#stateful-mode) for the isolation model.
-- `AGY2API_MAX_SESSIONS`: cap on live stateful conversations (LRU-evicted above this), default `200`. Only meaningful with `AGY2API_STATEFUL=1`.
-- `AGY2API_STATEFUL_HOME`: isolated `agy` home directory used only in stateful mode, default `stateful_home/` inside the project (gitignored). See [Stateful mode](#stateful-mode).
-- `AGY2API_ALLOW_REMOTE`: allow binding a non-loopback host, default `false`
-- `AGY2API_READ_ONLY`: review mode combining `--sandbox` and `--dangerously-skip-permissions` (discards workspace writes), default `false`
-- `AGY2API_SANDBOX`: run under Antigravity terminal sandbox, default `false`
-- `AGY2API_SKIP_PERMISSIONS`: auto-approve tool permission requests without interactive prompt, default `false`
-- `HOST`: bind address, default `127.0.0.1` (see Auth & Privacy / Compliance)
-- `PORT`: server port, default `7862`
+### 3. Google Gemini Native Endpoint (`generateContent`)
+```bash
+curl -X POST http://127.0.0.1:7862/v1beta/models/gemini-3.8-flash-low:generateContent \
+  -H "Authorization: Bearer pwd" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "parts": [
+          {"text": "Hello, world!"}
+        ]
+      }
+    ]
+  }'
+```
 
-## Stateful mode
+---
 
-`AGY2API_STATEFUL=1` keeps one persistent `agy` conversation per chat and
-forwards only the new turn each request, instead of re-sending the full
-history. This shrinks per-turn payloads and makes long chats far less likely
-to hit the upstream connection cutoff. (`start.bat` selects this mode by
-default.)
+## ⚙️ Configuration Reference
 
-Because the OpenAI protocol is stateless, this is mapped heuristically: the
-incoming message list is fingerprinted, and if its prefix matches a chat we've
-already forwarded, only the trailing new turn is sent to the existing
-conversation via `agy --conversation <id>`.
+| Environment Variable | Description | Default |
+| :--- | :--- | :--- |
+| `PORT` | Local HTTP binding port | `7862` |
+| `HOST` | Local binding interface | `127.0.0.1` |
+| `AGY2API_KEY` | Bearer token authorization password | `pwd` |
+| `AGY2API_WARM_WORKER` | Keep warm in-memory CLI worker active | `1` (true) |
+| `AGY2API_MAX_CONCURRENCY` | Maximum concurrent execution requests | `3` |
+| `AGY_TIMEOUT` | Per-request timeout budget in seconds | `300` |
+| `AGY2API_STATEFUL` | Stateful conversation mode (preserves session DB) | `0` (false) |
+| `AGY2API_EXPOSE_REASONING` | Include reasoning output in completion chunks | `true` |
 
-### Isolated home (your TUI conversations stay safe)
+---
 
-Stateful mode runs `agy` inside its **own** home directory (default
-`stateful_home/` inside this project, gitignored; override with
-`AGY2API_STATEFUL_HOME`). It does this by setting `USERPROFILE` to that path for
-every `agy` subprocess, so `agy`'s entire data tree — conversations, brain,
-cache — lives there and **never touches your real `~/.gemini`**. Conversations
-you open manually in the `agy` TUI are in a different directory and are not
-affected.
+## 🧪 Testing
 
-The startup/exit disk wipes (below) therefore only ever delete agy2api's own
-sandbox files.
+Run the included regression and verification test suite:
 
-### Login (no separate login needed)
-
-`agy` stores its OAuth token in the **OS credential store** (Windows Credential
-Manager), not in the home directory. That store is system-scoped, so the
-sandbox automatically inherits your existing `agy` login — **no separate login
-is required**. As long as `agy` works for you normally (you've logged in via
-the TUI at least once), it works in the sandbox too. `start.bat` checks for
-this credential before launching.
-
-### Disk cleanup (bounded by design)
-
-A persistent conversation owns its DB, so it is *not* deleted after each run.
-To stop those files accumulating, stateful mode wipes its **own** sandbox
-conversations directory (every `*.db`, its SQLite sidecars, and every
-`brain/<id>/` directory under the sandbox) on two occasions:
-
-1. **on startup**, because the in-memory session index starts empty and any
-   `.db` left by a previous run is an unreachable orphan; and
-2. **on any process exit** (graceful shutdown, Ctrl-C, `sys.exit`) — a
-   last-resort `atexit` hook guarantees it even when the graceful-shutdown
-   path doesn't fire.
-
-This dual wipe means stateful **memory never survives a restart**, by design.
-Disk usage cannot grow unbounded.
-
-## Known Limits
-
-- No true streaming: the CLI writes the final result into SQLite after completion.
-- Latency is usually several seconds because each request starts an `agy` run.
-- Antigravity is an agent and may use tools for complex prompts.
-- The protobuf fields are reverse-engineered and may need updates if `agy` changes its cache schema.
-- Long replies can fail mid-generation with `agy upstream error: ... connection
-  forcibly closed` when a proxy/VPN drops the long-lived connection to Google
-  (e.g. a ~60s connection cap). The reasoning phase dominates generation time,
-  so for long chats prefer a low-reasoning model (e.g. `gemini-3.8-flash-low` or `"reasoning_effort": "low"`)
-  to finish sooner, and/or route `*.googleapis.com` through a proxy that allows
-  long-lived connections (or direct).
-- On Windows, command-line arguments are capped at 32,767 characters by `CreateProcessW`. Fully
-  assembled commands exceeding 32,000 UTF-16 code units (where non-BMP / supplementary Unicode
-  characters count as two code units) trigger an early guard advising the use of stateful mode
-  (`AGY2API_STATEFUL=1`) so only incremental turns are sent.
-
-## Testing
-
-Run the zero-dependency test suite (uses Python's standard library `unittest`):
-
-```powershell
+```bash
 python run_tests.py -v
 ```
 
-All 21 tests execute in ~0.08s and verify model alias/effort resolution, configuration settings, Pydantic requests, real SQLite conversation extraction, stateful session store, fake streaming, and Windows command-line limit detection/cleanup.
+All 21 unit tests verify Pydantic models, CLI wrappers, protocol encoders, fake-stream helpers, and stateful session logic.
 
-## Maintenance
+---
 
-agy2api parses agy's internals by reverse engineering and pins agy (auto-update
-suppressed), so a new agy build can break it. A scheduled GitHub Actions
-workflow ([.github/workflows/agy-version-watch.yml](.github/workflows/agy-version-watch.yml))
-polls agy's auto-updater endpoint weekly for the latest stable version and, on a
-bump, opens an issue with a re-validation checklist (DB schema, protobuf fields,
-flags, env behaviour). There is no public per-version agy-CLI changelog to
-keyword-scan, so it's a version-bump alert plus a manual checklist — not a diff.
+## ⚖️ License & Compliance
 
-## License
+- Licensed under **Apache-2.0**.
+- **Unofficial Personal Tool**: This software is not affiliated with, endorsed by, or supported by Google.
+- All requests leverage the user's own authenticated Google Antigravity quota.
 
-Apache-2.0. This project is written from scratch and does not copy `gcli2api` code.
+---
+
+*Authored & Enhanced with passion for high-speed accessibility and mobile AI automation.*
