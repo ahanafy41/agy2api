@@ -488,9 +488,9 @@ async def gemini_generate_content(model_action: str, request: Request):
                         if yt_file:
                             ephemeral_files.append(yt_file)
                         prompt_parts.append(yt_prompt)
-            elif "inline_data" in part:
-                idat = part["inline_data"]
-                mime = idat.get("mime_type", "image/jpeg")
+            elif "inline_data" in part or "inlineData" in part:
+                idat = part.get("inline_data") or part.get("inlineData", {})
+                mime = idat.get("mime_type") or idat.get("mimeType", "image/jpeg")
                 b64_str = idat.get("data", "")
                 saved_path = _save_base64_media(b64_str, mime) if b64_str else None
                 if saved_path:
@@ -517,10 +517,10 @@ async def gemini_generate_content(model_action: str, request: Request):
                         )
                 else:
                     prompt_parts.append(f"[مرفق وسائط: {mime}]")
-            elif "file_data" in part:
-                fdat = part["file_data"]
-                f_uri = str(fdat.get("file_uri", "")).strip()
-                f_mime = str(fdat.get("mime_type", "")).strip().lower()
+            elif "file_data" in part or "fileData" in part:
+                fdat = part.get("file_data") or part.get("fileData", {})
+                f_uri = str(fdat.get("file_uri") or fdat.get("fileUri", "")).strip()
+                f_mime = str(fdat.get("mime_type") or fdat.get("mimeType", "")).strip().lower()
 
                 if "youtube.com" in f_uri or "youtu.be" in f_uri:
                     yt_prompt, yt_file = process_youtube_request(f_uri, user_context or "فحص وتحليل هذا الفيديو بدقة والإجابة عن طلب المستخدم", MEDIA_CACHE_DIR)
@@ -584,14 +584,37 @@ async def gemini_generate_content(model_action: str, request: Request):
                     answer = res.response.answer
                 except Exception as e2:
                     logger.error("fallback _execute_run also failed: %s", e2)
-                    answer = "عذراً يا ريس، حدث ضغط مؤقت على سيرفر الذكاء الاصطناعي (503 Unavailable). يرجى تكرار المحاولة في لحظات."
+                    err_str = f"{exc} {e2}"
+                    if any(q in err_str.lower() for q in ["quota", "resource_exhausted", "429"]):
+                        # Auto-fallback to alternative model if current model quota is reached
+                        alt_model = "Gemini 3.8 Flash (Low)" if "medium" in str(resolved_model).lower() else "Claude Sonnet 4.6 (Thinking)"
+                        logger.info("Auto-fallback on quota exhaustion: switching to %s", alt_model)
+                        try:
+                            res = await _execute_run(full_prompt, alt_model, None, False, None)
+                            answer = res.response.answer
+                        except Exception as e3:
+                            logger.error("Auto-fallback to %s also failed: %s", alt_model, e3)
+                            answer = "عذراً يا ريس، حدث ضغط مؤقت على سيرفر الذكاء الاصطناعي (503 Unavailable). يرجى تكرار المحاولة في لحظات."
+                    else:
+                        answer = "عذراً يا ريس، حدث ضغط مؤقت على سيرفر الذكاء الاصطناعي (503 Unavailable). يرجى تكرار المحاولة في لحظات."
         else:
             try:
                 res = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
                 answer = res.response.answer
             except Exception as e2:
                 logger.error("_execute_run failed: %s", e2)
-                answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
+                err_str = str(e2)
+                if any(q in err_str.lower() for q in ["quota", "resource_exhausted", "429"]):
+                    alt_model = "Gemini 3.8 Flash (Low)" if "medium" in str(resolved_model).lower() else "Claude Sonnet 4.6 (Thinking)"
+                    logger.info("Auto-fallback on quota exhaustion: switching to %s", alt_model)
+                    try:
+                        res = await _execute_run(full_prompt, alt_model, None, False, None)
+                        answer = res.response.answer
+                    except Exception as e3:
+                        logger.error("Auto-fallback to %s also failed: %s", alt_model, e3)
+                        answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
+                else:
+                    answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
 
         return JSONResponse(
             content={
