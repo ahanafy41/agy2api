@@ -165,18 +165,20 @@ class Settings:
         )
     )
     workdir: Path = Path(
-        os.getenv("AGY_WORKDIR", str(Path(__file__).resolve().parent.parent))
+        os.getenv(
+            "AGY_WORKDIR", str(Path(__file__).resolve().parent / "isolated_workspace")
+        )
     )
     # Lessons from relay.mjs: sandbox, permission automation, and read-only mode
     sandbox: bool = _bool_env("AGY2API_SANDBOX", False)
     dangerously_skip_permissions: bool = _bool_env("AGY2API_SKIP_PERMISSIONS", True)
     read_only: bool = _bool_env("AGY2API_READ_ONLY", False)
-    warm_worker: bool = _bool_env("AGY2API_WARM_WORKER", True)
     janitor_interval: int = int(os.getenv("AGY2API_JANITOR_INTERVAL", "3600"))
     janitor_max_age: int = int(os.getenv("AGY2API_JANITOR_MAX_AGE", "3600"))
     models: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
+        self.workdir.mkdir(parents=True, exist_ok=True)
         if self.read_only:
             object.__setattr__(self, "sandbox", True)
             object.__setattr__(self, "dangerously_skip_permissions", True)

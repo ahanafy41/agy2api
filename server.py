@@ -29,7 +29,6 @@ from agy_runner import (
     sweep_orphan_sidecars,
 )
 from config import is_loopback_host, resolve_model, settings
-from warm_worker import warm_worker
 from fake_stream import make_heartbeat, sse_event, stream_chunks
 from models import ChatCompletionRequest, ModelInfo, ModelList
 from session_store import SessionStore, fingerprint
@@ -106,10 +105,6 @@ def run_janitor_sweep(max_age_seconds: int = 3600) -> dict[str, int]:
 
     # Gather protected conversation IDs
     protected_cids: set[str] = set(_in_flight)
-    try:
-        protected_cids.update(warm_worker.get_active_cids())
-    except Exception:
-        pass
     if _session_store is not None:
         try:
             protected_cids.update(_session_store.all_ids())
@@ -256,11 +251,6 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await janitor_task
         except asyncio.CancelledError:
             pass
-        except Exception:
-            pass
-
-        try:
-            await warm_worker.stop()
         except Exception:
             pass
 
@@ -452,28 +442,6 @@ async def chat_completions(
         )
 
     try:
-        # Warm Worker: 100% Official agy binary kept warm in stream-json mode
-        if not request_body.stream and settings.warm_worker and not settings.stateful:
-            try:
-                started = time.time()
-                warm_text = await warm_worker.run_turn(prompt, agy_model)
-                logger.info(
-                    "ok (warm-worker): model=%s answer_chars=%d in %.2fs",
-                    model,
-                    len(warm_text),
-                    time.time() - started,
-                )
-                return JSONResponse(
-                    content=build_completion_response(
-                        answer=warm_text,
-                        reasoning="",
-                        model=model,
-                        finish_reason="stop",
-                    )
-                )
-            except Exception as exc:
-                logger.warning("warm-worker failed; falling back to agy CLI: %s", exc)
-
         started = time.time()
         try:
             result = await _execute_run(prompt, agy_model, resume_id, keep, agy_effort)
@@ -706,50 +674,23 @@ async def gemini_generate_content(model_action: str, request: Request):
     logger.info("gemini-compat: model=%s (resolved=%s) prompt_chars=%d", model_id, resolved_model, len(full_prompt))
 
     try:
-        answer = ""
-        if settings.warm_worker and not settings.stateful:
-            try:
-                started = time.time()
-                answer = await warm_worker.run_turn(full_prompt, resolved_model)
-                logger.info("ok (gemini-compat warm-worker): in %.2fs", time.time() - started)
-            except Exception as exc:
-                logger.warning("gemini-compat warm-worker failed, fallback: %s", exc)
+        try:
+            res = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
+            answer = res.response.answer
+        except Exception as e2:
+            logger.error("_execute_run failed: %s", e2)
+            err_str = str(e2)
+            if any(q in err_str.lower() for q in ["quota", "resource_exhausted", "429"]):
+                alt_model = "Gemini 3.8 Flash (Low)" if "medium" in str(resolved_model).lower() else "Claude Sonnet 4.6 (Thinking)"
+                logger.info("Auto-fallback on quota exhaustion: switching to %s", alt_model)
                 try:
-                    res = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
+                    res = await _execute_run(full_prompt, alt_model, None, False, None)
                     answer = res.response.answer
-                except Exception as e2:
-                    logger.error("fallback _execute_run also failed: %s", e2)
-                    err_str = f"{exc} {e2}"
-                    if any(q in err_str.lower() for q in ["quota", "resource_exhausted", "429"]):
-                        # Auto-fallback to alternative model if current model quota is reached
-                        alt_model = "Gemini 3.8 Flash (Low)" if "medium" in str(resolved_model).lower() else "Claude Sonnet 4.6 (Thinking)"
-                        logger.info("Auto-fallback on quota exhaustion: switching to %s", alt_model)
-                        try:
-                            res = await _execute_run(full_prompt, alt_model, None, False, None)
-                            answer = res.response.answer
-                        except Exception as e3:
-                            logger.error("Auto-fallback to %s also failed: %s", alt_model, e3)
-                            answer = "عذراً يا ريس، حدث ضغط مؤقت على سيرفر الذكاء الاصطناعي (503 Unavailable). يرجى تكرار المحاولة في لحظات."
-                    else:
-                        answer = "عذراً يا ريس، حدث ضغط مؤقت على سيرفر الذكاء الاصطناعي (503 Unavailable). يرجى تكرار المحاولة في لحظات."
-        else:
-            try:
-                res = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
-                answer = res.response.answer
-            except Exception as e2:
-                logger.error("_execute_run failed: %s", e2)
-                err_str = str(e2)
-                if any(q in err_str.lower() for q in ["quota", "resource_exhausted", "429"]):
-                    alt_model = "Gemini 3.8 Flash (Low)" if "medium" in str(resolved_model).lower() else "Claude Sonnet 4.6 (Thinking)"
-                    logger.info("Auto-fallback on quota exhaustion: switching to %s", alt_model)
-                    try:
-                        res = await _execute_run(full_prompt, alt_model, None, False, None)
-                        answer = res.response.answer
-                    except Exception as e3:
-                        logger.error("Auto-fallback to %s also failed: %s", alt_model, e3)
-                        answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
-                else:
+                except Exception as e3:
+                    logger.error("Auto-fallback to %s also failed: %s", alt_model, e3)
                     answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
+            else:
+                answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
 
         return JSONResponse(
             content={

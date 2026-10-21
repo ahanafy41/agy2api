@@ -352,15 +352,15 @@ class MultimodalAndMediaCacheTests(unittest.TestCase):
         self.assertIn("http://example.com/test.jpg", result)
 
 
-class WarmWorkerEnvironmentTests(unittest.TestCase):
-    """Test warm worker sandbox path isolation."""
+class EnvironmentIsolationTests(unittest.TestCase):
+    """Test sandbox and workspace path isolation."""
 
-    def test_worker_paths_contained_within_repo(self) -> None:
-        """ISOLATED_HOME and EMPTY_WS must reside within the agy2api repository root."""
-        from warm_worker import EMPTY_WS, ISOLATED_HOME, REPO_ROOT
+    def test_isolated_workspace_contained_within_repo(self) -> None:
+        """Isolated workspace must reside within the agy2api repository root."""
+        from config import settings
 
-        self.assertEqual(ISOLATED_HOME.parent, REPO_ROOT)
-        self.assertEqual(EMPTY_WS.parent, REPO_ROOT)
+        repo_root = Path(__file__).resolve().parent
+        self.assertEqual(settings.workdir, repo_root / "isolated_workspace")
 
 
 class YouTubeHandlerTests(unittest.TestCase):
@@ -462,7 +462,6 @@ class BackgroundJanitorAndEphemeralTests(unittest.TestCase):
         """run_janitor_sweep must sweep stale media, DBs, brain dirs, and logs while protecting active ones."""
         from server import MEDIA_CACHE_DIR, run_janitor_sweep, _in_flight
         from config import settings
-        from warm_worker import warm_worker
         import shutil
 
         now = time.time()
@@ -530,20 +529,9 @@ class BackgroundJanitorAndEphemeralTests(unittest.TestCase):
             shutil.rmtree(stale_brain, ignore_errors=True)
             temp_log.unlink(missing_ok=True)
 
-    def test_warm_worker_and_session_store_helpers(self) -> None:
-        """WarmAgyWorker.get_active_cids and SessionStore.all_ids return tracked IDs."""
-        from warm_worker import warm_worker
+    def test_session_store_all_ids_helper(self) -> None:
+        """SessionStore.all_ids returns all tracked conversation IDs."""
         from session_store import SessionStore
-
-        warm_worker.conversation_id = "test-cid-1"
-        warm_worker._standby_cid = "test-cid-2"
-        try:
-            cids = warm_worker.get_active_cids()
-            self.assertIn("test-cid-1", cids)
-            self.assertIn("test-cid-2", cids)
-        finally:
-            warm_worker.conversation_id = None
-            warm_worker._standby_cid = None
 
         store = SessionStore(10)
         store.remember("session-a", ["user:hello"])
