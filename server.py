@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import base64
 import json
 import logging
 import os
@@ -26,6 +27,7 @@ from agy_runner import (
     sweep_orphan_sidecars,
 )
 from config import is_loopback_host, resolve_model, settings
+from warm_worker import warm_worker
 from fake_stream import make_heartbeat, sse_event, stream_chunks
 from models import ChatCompletionRequest, ModelInfo, ModelList
 from session_store import SessionStore, fingerprint
@@ -98,6 +100,10 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        try:
+            await warm_worker.stop()
+        except Exception:
+            pass
         # Shutdown housekeeping. The atexit hook covers plain `python server.py`
         # exit too; this fires on uvicorn's graceful stop. Belt-and-suspenders so
         # a clean stop never leaves orphaned stateful sessions behind.
@@ -273,6 +279,28 @@ async def chat_completions(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    # Warm Worker: 100% Official agy binary kept warm in stream-json mode
+    if not request_body.stream and settings.warm_worker and not settings.stateful:
+        try:
+            started = time.time()
+            warm_text = await warm_worker.run_turn(prompt, agy_model)
+            logger.info(
+                "ok (warm-worker): model=%s answer_chars=%d in %.2fs",
+                model,
+                len(warm_text),
+                time.time() - started,
+            )
+            return JSONResponse(
+                content=build_completion_response(
+                    answer=warm_text,
+                    reasoning="",
+                    model=model,
+                    finish_reason="stop",
+                )
+            )
+        except Exception as exc:
+            logger.warning("warm-worker failed; falling back to agy CLI: %s", exc)
+
     started = time.time()
     try:
         result = await _execute_run(prompt, agy_model, resume_id, keep, agy_effort)
@@ -304,6 +332,231 @@ async def chat_completions(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/v1beta/models")
+async def gemini_models():
+    """Google Gemini API compatibility: List models."""
+    models_list = [
+        {
+            "name": f"models/{m}",
+            "version": "001",
+            "displayName": m,
+            "description": f"Antigravity model {m}",
+            "supportedGenerationMethods": ["generateContent"],
+        }
+        for m in settings.models
+    ]
+    return JSONResponse(content={"models": models_list})
+
+
+MEDIA_CACHE_DIR = Path(__file__).resolve().parent / "media_cache"
+MEDIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _cleanup_old_media_cache(max_age_seconds: int = 7200) -> None:
+    """Removes cached media files older than max_age_seconds (default 2 hours)."""
+    try:
+        now = time.time()
+        for f in MEDIA_CACHE_DIR.glob("*"):
+            if f.is_file() and (now - f.stat().st_mtime) > max_age_seconds:
+                f.unlink(missing_ok=True)
+    except Exception as exc:
+        logger.debug("media_cache cleanup error: %s", exc)
+
+
+def _save_base64_media(b64_data: str, mime_type: str = "image/jpeg") -> Path | None:
+    """Decodes a base64 media string (raw or data URI) and persists it to media_cache."""
+    try:
+        _cleanup_old_media_cache()
+        if b64_data.startswith("data:"):
+            header, _, encoded = b64_data.partition(",")
+            if ";" in header:
+                mime_part = header.split(";")[0].replace("data:", "").strip()
+                if mime_part:
+                    mime_type = mime_part
+            b64_data = encoded
+
+        ext = ".jpg"
+        mime_lower = mime_type.lower()
+        if "png" in mime_lower:
+            ext = ".png"
+        elif "webp" in mime_lower:
+            ext = ".webp"
+        elif "gif" in mime_lower:
+            ext = ".gif"
+        elif "pdf" in mime_lower:
+            ext = ".pdf"
+        elif "mp4" in mime_lower:
+            ext = ".mp4"
+        elif "mp3" in mime_lower or "mpeg" in mime_lower:
+            ext = ".mp3"
+        elif "wav" in mime_lower:
+            ext = ".wav"
+        elif "m4a" in mime_lower:
+            ext = ".m4a"
+
+        raw_bytes = base64.b64decode(b64_data)
+        fname = f"media_{int(time.time() * 1000)}_{os.urandom(4).hex()}{ext}"
+        fpath = MEDIA_CACHE_DIR / fname
+        fpath.write_bytes(raw_bytes)
+        try:
+            os.chmod(fpath, 0o644)
+        except OSError:
+            pass
+        logger.info("Saved media (%s, %d bytes) to %s", mime_type, len(raw_bytes), fpath)
+        return fpath
+    except Exception as exc:
+        logger.error("Failed to decode/save base64 media: %s", exc)
+        return None
+
+
+@app.post("/v1beta/models/{model_action:path}")
+async def gemini_generate_content(model_action: str, request: Request):
+    """Google Gemini API compatibility: Generate content with full multimodal support."""
+    clean_action = model_action.split("?")[0]
+    model_id = clean_action.split(":")[0].replace("models/", "")
+    resolved_model, agy_effort = resolve_model(model_id)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    prompt_parts: list[str] = []
+    if "system_instruction" in body:
+        sys_parts = body["system_instruction"].get("parts", [])
+        for sp in sys_parts:
+            if "text" in sp:
+                prompt_parts.append(f"System: {sp['text']}")
+
+    has_image = False
+    for content in body.get("contents", []):
+        for part in content.get("parts", []):
+            if "text" in part:
+                prompt_parts.append(part["text"])
+            elif "inline_data" in part:
+                idat = part["inline_data"]
+                mime = idat.get("mime_type", "image/jpeg")
+                b64_str = idat.get("data", "")
+                saved_path = _save_base64_media(b64_str, mime) if b64_str else None
+                if saved_path:
+                    if "image" in mime.lower():
+                        has_image = True
+                        prompt_parts.append(
+                            f"صورة مرفقة محفوظة في المسار التالي على الجهاز:\n{saved_path}\n"
+                            "اقرأ هذه الصورة المرفقة في المسار المحدد (باستخدام أداة read_file) وحللها بدقة واستخرج كل النصوص المكتوبة فيها، وقدّم الوصف المطلوب بالصيغة المحددة."
+                        )
+                    elif "pdf" in mime.lower():
+                        prompt_parts.append(
+                            f"مستند PDF محلي محفوظ في المسار:\n{saved_path}\n"
+                            "اقرأ هذا المستند بدقة باستخدام أداة read_file واستخرج النصوص أو أجب عن السؤال المطلوب."
+                        )
+                    elif "audio" in mime.lower():
+                        prompt_parts.append(
+                            f"ملف صوتي محلي محفوظ في المسار:\n{saved_path}\n"
+                            "استمع لهذا الملف الصوتي باستخدام أداة read_file وقم بتفريغه وتحويله إلى نص بدقة."
+                        )
+                    else:
+                        prompt_parts.append(
+                            f"ملف وسائط محفوظ في المسار:\n{saved_path}\nنوع الملف: {mime}\n"
+                            "افحص هذا الملف باستخدام أداة read_file ونفّذ المطلوب بدقة."
+                        )
+                else:
+                    prompt_parts.append(f"[مرفق وسائط: {mime}]")
+            elif "file_data" in part:
+                fdat = part["file_data"]
+                f_uri = str(fdat.get("file_uri", "")).strip()
+                f_mime = str(fdat.get("mime_type", "")).strip().lower()
+
+                if "youtube.com" in f_uri or "youtu.be" in f_uri:
+                    prompt_parts.append(
+                        f"رابط فيديو يوتيوب للتحليل:\n{f_uri}\n"
+                        "المطلوب: تفقد أو تصفح رابط اليوتيوب هذا (باستخدام أدوات الويب مثل read_url_content أو search_web أو الأدوات المتاحة) "
+                        "واستخرج عنوان الفيديو وموضوعه ومحتواه بدقة، وأجب عن طلب المستخدم."
+                    )
+                elif f_uri.startswith("http://") or f_uri.startswith("https://"):
+                    prompt_parts.append(
+                        f"رابط ويب مرفق للتحليل:\n{f_uri}\nنوع المحتوى: {f_mime}\n"
+                        "المطلوب: قم بزيارة وقراءة محتوى الرابط والإجابة عن طلب المستخدم بدقة."
+                    )
+                elif f_uri.startswith("/") or f_uri.startswith("file://"):
+                    clean_path = f_uri.replace("file://", "")
+                    if "pdf" in f_mime or clean_path.lower().endswith(".pdf"):
+                        prompt_parts.append(
+                            f"مستند PDF محلي موجود في المسار:\n{clean_path}\n"
+                            "المطلوب: اقرأ هذا المستند بدقة باستخدام أداة read_file واستخرج النصوص أو أجب عن السؤال المطلوب بناءً على التعليمات."
+                        )
+                    elif "video" in f_mime or any(clean_path.lower().endswith(ext) for ext in [".mp4", ".mkv", ".mov", ".avi", ".webm", ".3gp"]):
+                        prompt_parts.append(
+                            f"ملف فيديو محلي موجود في المسار:\n{clean_path}\nنوع الملف: {f_mime}\n"
+                            "المطلوب: تفقد هذا الملف واقرأ معلوماته ومحتواه وأجب عن طلب المستخدم بدقة."
+                        )
+                    elif "audio" in f_mime or any(clean_path.lower().endswith(ext) for ext in [".mp3", ".wav", ".m4a", ".aac", ".ogg"]):
+                        prompt_parts.append(
+                            f"ملف صوتي محلي موجود في المسار:\n{clean_path}\nنوع الملف: {f_mime}\n"
+                            "المطلوب: اقرأ هذا الملف الصوتي باستخدام أداة read_file وقم بتفريغه وتحويله إلى نص بدقة عالية."
+                        )
+                    else:
+                        prompt_parts.append(
+                            f"ملف محلي مرفق في المسار:\n{clean_path}\nنوع الملف: {f_mime}\n"
+                            "المطلوب: افحص هذا الملف باستخدام أداة read_file ونفّذ المطلوب بدقة."
+                        )
+                else:
+                    prompt_parts.append(f"[ملف وسائط مرفق: {f_uri} - نوع: {f_mime}]")
+
+    full_prompt = "\n\n".join(prompt_parts).strip()
+    if has_image and ("Description:" in full_prompt or "Format:" in full_prompt or "صف" in full_prompt or "Describe" in full_prompt):
+        full_prompt += (
+            "\n\nملاحظة هامة جداً: بعد قراءة الصورة عبر read_file، التزم حرفياً بالصيغة التالية في إجابتك لتتمكن الشاشة من قراءتها وعرضها:\n"
+            "Description: <اكتب هنا وصف الصورة الكامل بالتفصيل بالعربية>\n"
+            "Text: <اكتب هنا كل النصوص المستخرجة بالحرف، أو لا يوجد نص>"
+        )
+
+    if not full_prompt:
+        full_prompt = "Hello"
+
+    logger.info("gemini-compat: model=%s (resolved=%s) prompt_chars=%d", model_id, resolved_model, len(full_prompt))
+
+    answer = ""
+    if settings.warm_worker and not settings.stateful:
+        try:
+            started = time.time()
+            answer = await warm_worker.run_turn(full_prompt, resolved_model)
+            logger.info("ok (gemini-compat warm-worker): in %.2fs", time.time() - started)
+        except Exception as exc:
+            logger.warning("gemini-compat warm-worker failed, fallback: %s", exc)
+            try:
+                answer, _ = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
+            except Exception as e2:
+                logger.error("fallback _execute_run also failed: %s", e2)
+                answer = "عذراً يا ريس، حدث ضغط مؤقت على سيرفر الذكاء الاصطناعي (503 Unavailable). يرجى تكرار المحاولة في لحظات."
+    else:
+        try:
+            answer, _ = await _execute_run(full_prompt, resolved_model, None, False, agy_effort)
+        except Exception as e2:
+            logger.error("_execute_run failed: %s", e2)
+            answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
+
+    return JSONResponse(
+        content={
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": answer}],
+                        "role": "model",
+                    },
+                    "finishReason": "STOP",
+                    "index": 0,
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 0,
+                "candidatesTokenCount": len(answer),
+                "totalTokenCount": len(answer),
+            },
+        }
+    )
 
 
 async def _stream_response(
@@ -369,10 +622,28 @@ def _content_to_text(content: Any) -> str:
         pieces: list[str] = []
         for item in content:
             if isinstance(item, dict):
-                if item.get("type") == "text":
+                t = item.get("type")
+                if t == "text":
                     pieces.append(str(item.get("text", "")))
                 elif "text" in item:
                     pieces.append(str(item["text"]))
+                elif t == "image_url":
+                    img_info = item.get("image_url", {})
+                    url = img_info.get("url", "") if isinstance(img_info, dict) else str(img_info)
+                    if url.startswith("data:"):
+                        saved_path = _save_base64_media(url)
+                        if saved_path:
+                            pieces.append(
+                                f"صورة مرفقة محفوظة في المسار التالي على الجهاز:\n{saved_path}\n"
+                                "اقرأ هذه الصورة المرفقة في المسار المحدد (باستخدام أداة read_file) وحللها بدقة واستخرج كل النصوص المكتوبة فيها."
+                            )
+                        else:
+                            pieces.append("[مرفق صورة base64]")
+                    elif url.startswith("http://") or url.startswith("https://"):
+                        pieces.append(f"صورة عبر الرابط: {url}\nيرجى فحصها وتحليلها.")
+                    elif url.startswith("/") or url.startswith("file://"):
+                        clean_path = url.replace("file://", "")
+                        pieces.append(f"صورة في المسار التالي على الجهاز:\n{clean_path}\nاقرأ هذه الصورة باستخدام read_file وحللها بدقة.")
             else:
                 pieces.append(str(item))
         return "\n".join(piece for piece in pieces if piece)

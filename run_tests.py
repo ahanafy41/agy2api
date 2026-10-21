@@ -282,6 +282,7 @@ class WindowsCommandLineGuardTests(unittest.TestCase):
             check_windows_command_length(command)
         self.assertIn("exceeds Windows limit", str(ctx.exception))
 
+    @unittest.skipUnless(os.name == "nt", "Windows command line length guard only applies on Windows")
     def test_oversized_run_cleans_up_temporary_log_file(self) -> None:
         """_run_agy_once must delete log_path when command length check fails."""
         from agy_runner import _run_agy_once

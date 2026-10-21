@@ -11,6 +11,7 @@ server_run.log
 srv.out
 srv.err
 *.log
+*.pid
 
 # Local conversation databases (never commit — contain prompts/responses)
 *.db

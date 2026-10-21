@@ -69,6 +69,8 @@ MODEL_ALIASES: dict[str, str] = {
     "gemini-3.5-flash-medium": "gemini-3.8-flash",
     "gemini-3.5-flash-high": "gemini-3.8-flash-high",
     "gemini-3.5-flash-low": "gemini-3.8-flash-low",
+    "gemini-3.1-flash-lite": "gemini-3.8-flash-low",
+    "gemini-3-flash": "gemini-3.8-flash",
     "claude-sonnet-4-6": "claude-sonnet-4.6",
     "claude-opus-4-6": "claude-opus-4.6",
     "claude-opus-4-6-thinking": "claude-opus-4.6",
@@ -167,8 +169,9 @@ class Settings:
     )
     # Lessons from relay.mjs: sandbox, permission automation, and read-only mode
     sandbox: bool = _bool_env("AGY2API_SANDBOX", False)
-    dangerously_skip_permissions: bool = _bool_env("AGY2API_SKIP_PERMISSIONS", False)
+    dangerously_skip_permissions: bool = _bool_env("AGY2API_SKIP_PERMISSIONS", True)
     read_only: bool = _bool_env("AGY2API_READ_ONLY", False)
+    warm_worker: bool = _bool_env("AGY2API_WARM_WORKER", True)
     models: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
