@@ -172,6 +172,8 @@ class Settings:
     dangerously_skip_permissions: bool = _bool_env("AGY2API_SKIP_PERMISSIONS", True)
     read_only: bool = _bool_env("AGY2API_READ_ONLY", False)
     warm_worker: bool = _bool_env("AGY2API_WARM_WORKER", True)
+    janitor_interval: int = int(os.getenv("AGY2API_JANITOR_INTERVAL", "3600"))
+    janitor_max_age: int = int(os.getenv("AGY2API_JANITOR_MAX_AGE", "3600"))
     models: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:

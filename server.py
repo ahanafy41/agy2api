@@ -8,8 +8,10 @@ import base64
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
@@ -55,14 +57,151 @@ def _setup_logging() -> None:
 
 _setup_logging()
 
+MEDIA_CACHE_DIR = Path(__file__).resolve().parent / "media_cache"
+MEDIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Limit concurrent agy runs (default 1) to mimic human-paced usage and avoid the
+# concurrent conversation-DB race. See config.max_concurrency.
+_run_semaphore = asyncio.Semaphore(max(1, settings.max_concurrency))
+
+# Experimental stateful-session layer (AGY2API_STATEFUL).
+_session_store = SessionStore(settings.max_sessions) if settings.stateful else None
+_conv_locks: dict[str, asyncio.Lock] = {}
+# Conversations currently being run (resumed). Eviction must not delete these.
+_in_flight: set[str] = set()
+
+
+def _cleanup_old_media_cache(max_age_seconds: int = 7200) -> None:
+    """Removes cached media files older than max_age_seconds (default 2 hours)."""
+    try:
+        now = time.time()
+        for f in MEDIA_CACHE_DIR.glob("*"):
+            if f.is_file() and (now - f.stat().st_mtime) > max_age_seconds:
+                f.unlink(missing_ok=True)
+    except Exception as exc:
+        logger.debug("media_cache cleanup error: %s", exc)
+
+
+def run_janitor_sweep(max_age_seconds: int = 3600) -> dict[str, int]:
+    """Sweeps stale media cache files, orphaned conversation databases,
+    brain directories, and temporary log files older than max_age_seconds.
+
+    Protects in-flight conversations, active warm-worker CIDs, and stateful sessions.
+    """
+    now = time.time()
+    stats = {"media": 0, "conversations": 0, "brain": 0, "logs": 0}
+
+    # 1. Sweep media_cache
+    try:
+        if MEDIA_CACHE_DIR.exists():
+            for f in MEDIA_CACHE_DIR.glob("*"):
+                try:
+                    if f.is_file() and (now - f.stat().st_mtime) >= max_age_seconds:
+                        f.unlink(missing_ok=True)
+                        stats["media"] += 1
+                except Exception:
+                    pass
+    except Exception as exc:
+        logger.debug("janitor media sweep error: %s", exc)
+
+    # Gather protected conversation IDs
+    protected_cids: set[str] = set(_in_flight)
+    try:
+        protected_cids.update(warm_worker.get_active_cids())
+    except Exception:
+        pass
+    if _session_store is not None:
+        try:
+            protected_cids.update(_session_store.all_ids())
+        except Exception:
+            pass
+
+    # 2. Sweep conversations (.db, .db-wal, .db-shm)
+    conv_dir = settings.conversations_dir
+    try:
+        if conv_dir.exists():
+            for f in conv_dir.glob("*.db*"):
+                try:
+                    cid = f.name.split(".db")[0]
+                    if cid in protected_cids:
+                        continue
+                    if (now - f.stat().st_mtime) >= max_age_seconds:
+                        f.unlink(missing_ok=True)
+                        stats["conversations"] += 1
+                except Exception:
+                    pass
+    except Exception as exc:
+        logger.debug("janitor conversations sweep error: %s", exc)
+
+    # 3. Sweep brain directories
+    try:
+        brain_dir = conv_dir.parent / "brain"
+        if brain_dir.is_dir():
+            for sub in brain_dir.iterdir():
+                try:
+                    if not sub.is_dir():
+                        continue
+                    cid = sub.name
+                    if cid in protected_cids:
+                        continue
+                    if (now - sub.stat().st_mtime) >= max_age_seconds:
+                        shutil.rmtree(sub, ignore_errors=True)
+                        stats["brain"] += 1
+                except Exception:
+                    pass
+    except Exception as exc:
+        logger.debug("janitor brain sweep error: %s", exc)
+
+    # 4. Sweep temporary log files
+    temp_dirs = {
+        Path(tempfile.gettempdir()),
+        Path("/tmp"),
+        Path("/data/data/com.termux/files/usr/tmp"),
+    }
+    for td in temp_dirs:
+        try:
+            if not td.is_dir():
+                continue
+            for log_file in td.glob("agy2api-*.log"):
+                try:
+                    if (now - log_file.stat().st_mtime) >= max_age_seconds:
+                        log_file.unlink(missing_ok=True)
+                        stats["logs"] += 1
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return stats
+
+
+async def _background_janitor(interval_seconds: int = 3600, max_age_seconds: int = 3600) -> None:
+    """Runs periodic sweeps in the background every interval_seconds."""
+    logger.info("Background janitor started (interval=%ds, max_age=%ds)", interval_seconds, max_age_seconds)
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            stats = run_janitor_sweep(max_age_seconds)
+            total = sum(stats.values())
+            if total > 0:
+                logger.info(
+                    "Background janitor swept %d item(s) (media: %d, dbs: %d, brain: %d, logs: %d)",
+                    total,
+                    stats["media"],
+                    stats["conversations"],
+                    stats["brain"],
+                    stats["logs"],
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("Background janitor sweep error: %s", exc)
+
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """App lifespan: run housekeeping sweeps on startup, and again on shutdown.
-
-    The shutdown sweep is wrapped in `finally` so it still runs if the served
-    application raises during its lifetime. (The `atexit` hook is a further
-    last-resort guarantee for the stateful wipe.)"""
+    """App lifespan: run housekeeping sweeps on startup, background janitor periodically,
+    and final cleanup on shutdown."""
     # Startup preflight probe from relay.mjs: verify agy readiness and extract version
     try:
         ver_proc = subprocess.run(
@@ -99,17 +238,32 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             removed = sweep_orphan_sidecars()
             if removed:
                 logger.info("startup: swept %d orphan SQLite sidecar file(s)", removed)
-        _cleanup_old_media_cache(3600)
+        startup_stats = run_janitor_sweep(max_age_seconds=settings.janitor_max_age)
+        if any(startup_stats.values()):
+            logger.info("startup janitor sweep: %s", startup_stats)
     except Exception as exc:  # never block startup on housekeeping
         logger.warning("startup sweep failed: %s", exc)
+
+    janitor_task = asyncio.create_task(
+        _background_janitor(interval_seconds=settings.janitor_interval, max_age_seconds=settings.janitor_max_age)
+    )
 
     try:
         yield
     finally:
+        janitor_task.cancel()
+        try:
+            await janitor_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
         try:
             await warm_worker.stop()
         except Exception:
             pass
+
         # Shutdown housekeeping. The atexit hook covers plain `python server.py`
         # exit too; this fires on uvicorn's graceful stop. Belt-and-suspenders so
         # a clean stop never leaves orphaned stateful sessions behind.
@@ -121,23 +275,15 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             except Exception as exc:  # never block shutdown on housekeeping
                 logger.warning("shutdown sweep failed: %s", exc)
         try:
-            _cleanup_old_media_cache(3600)
+            shutdown_stats = run_janitor_sweep(max_age_seconds=0 if not settings.stateful else settings.janitor_max_age)
+            if any(shutdown_stats.values()):
+                logger.info("shutdown janitor sweep: %s", shutdown_stats)
         except Exception:
             pass
 
 
 app = FastAPI(title="agy2api", version="1.1.0", lifespan=_lifespan)
 security = HTTPBearer(auto_error=False)
-
-# Limit concurrent agy runs (default 1) to mimic human-paced usage and avoid the
-# concurrent conversation-DB race. See config.max_concurrency.
-_run_semaphore = asyncio.Semaphore(max(1, settings.max_concurrency))
-
-# Experimental stateful-session layer (AGY2API_STATEFUL).
-_session_store = SessionStore(settings.max_sessions) if settings.stateful else None
-_conv_locks: dict[str, asyncio.Lock] = {}
-# Conversations currently being run (resumed). Eviction must not delete these.
-_in_flight: set[str] = set()
 
 
 def _stateful_wipe() -> None:
@@ -204,19 +350,22 @@ async def _execute_run(
 
 def _msg_sigs(messages: list[Any]) -> list[str]:
     return [
-        fingerprint(getattr(m, "role", "user"), _content_to_text(getattr(m, "content", "")))
+        fingerprint(getattr(m, "role", "user"), _content_to_text(getattr(m, "content", ""), save_media=False))
         for m in messages
     ]
 
 
-def _plan_request(messages: list[Any]) -> tuple[str, str | None, list[str]]:
+def _plan_request(
+    messages: list[Any],
+    ephemeral_files: list[Path] | None = None,
+) -> tuple[str, str | None, list[str]]:
     """Return (prompt_to_send, resume_conversation_id, sigs).
 
     In stateful mode, if this request continues a known chat, send only the new
     turn against the existing agy conversation. Otherwise send the full history.
     """
     if _session_store is None:
-        return format_messages(messages), None, []
+        return format_messages(messages, ephemeral_files=ephemeral_files), None, []
     sigs = _msg_sigs(messages)
     plan = _session_store.lookup(sigs)
     if plan.conversation_id and plan.prefix_len < len(messages):
@@ -226,8 +375,8 @@ def _plan_request(messages: list[Any]) -> tuple[str, str | None, list[str]]:
         while new and getattr(new[0], "role", "") == "assistant":
             new = new[1:]
         if new:
-            return format_messages(new), plan.conversation_id, sigs
-    return format_messages(messages), None, sigs
+            return format_messages(new, ephemeral_files=ephemeral_files), plan.conversation_id, sigs
+    return format_messages(messages, ephemeral_files=ephemeral_files), None, sigs
 
 
 def _record_session(conversation_id: str, sigs: list[str]) -> None:
@@ -274,12 +423,12 @@ async def chat_completions(
 ):
     model = request_body.model
     agy_model, agy_effort = resolve_model(model, request_body.reasoning_effort)
-    prompt, resume_id, sigs = _plan_request(request_body.messages)
+    ephemeral_files: list[Path] = []
+    prompt, resume_id, sigs = _plan_request(request_body.messages, ephemeral_files=ephemeral_files)
     keep = settings.stateful
 
     # YouTube URL handling & Ephemeral Cleanup
     yt_urls = extract_youtube_urls(prompt)
-    ephemeral_files: list[Path] = []
     if yt_urls:
         augmented_prompt_parts = [prompt]
         for y_url in yt_urls:
@@ -352,10 +501,10 @@ async def chat_completions(
             )
         )
     finally:
-        for ef in ephemeral_files:
+        for ef in set(ephemeral_files):
             try:
                 ef.unlink(missing_ok=True)
-                logger.info("Cleaned up ephemeral video %s", ef)
+                logger.info("Cleaned up ephemeral file %s", ef)
             except Exception:
                 pass
 
@@ -379,21 +528,6 @@ async def gemini_models():
         for m in settings.models
     ]
     return JSONResponse(content={"models": models_list})
-
-
-MEDIA_CACHE_DIR = Path(__file__).resolve().parent / "media_cache"
-MEDIA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _cleanup_old_media_cache(max_age_seconds: int = 7200) -> None:
-    """Removes cached media files older than max_age_seconds (default 2 hours)."""
-    try:
-        now = time.time()
-        for f in MEDIA_CACHE_DIR.glob("*"):
-            if f.is_file() and (now - f.stat().st_mtime) > max_age_seconds:
-                f.unlink(missing_ok=True)
-    except Exception as exc:
-        logger.debug("media_cache cleanup error: %s", exc)
 
 
 def _save_base64_media(b64_data: str, mime_type: str = "image/jpeg") -> Path | None:
@@ -494,6 +628,7 @@ async def gemini_generate_content(model_action: str, request: Request):
                 b64_str = idat.get("data", "")
                 saved_path = _save_base64_media(b64_str, mime) if b64_str else None
                 if saved_path:
+                    ephemeral_files.append(saved_path)
                     if "image" in mime.lower():
                         has_image = True
                         prompt_parts.append(
@@ -636,10 +771,10 @@ async def gemini_generate_content(model_action: str, request: Request):
             }
         )
     finally:
-        for ef in ephemeral_files:
+        for ef in set(ephemeral_files):
             try:
                 ef.unlink(missing_ok=True)
-                logger.info("Cleaned up ephemeral Gemini video %s", ef)
+                logger.info("Cleaned up ephemeral media: %s", ef)
             except Exception:
                 pass
 
@@ -691,25 +826,29 @@ async def _stream_response(
         yield sse_event("[DONE]")
     finally:
         if cleanup_files:
-            for f in cleanup_files:
+            for f in set(cleanup_files):
                 try:
                     f.unlink(missing_ok=True)
-                    logger.info("Cleaned up ephemeral video %s", f)
+                    logger.info("Cleaned up ephemeral file %s", f)
                 except Exception:
                     pass
 
 
-def format_messages(messages: list[Any]) -> str:
+def format_messages(messages: list[Any], ephemeral_files: list[Path] | None = None) -> str:
     lines: list[str] = []
     for message in messages:
         role = getattr(message, "role", "user")
-        content = _content_to_text(getattr(message, "content", ""))
+        content = _content_to_text(getattr(message, "content", ""), ephemeral_files=ephemeral_files)
         if content:
             lines.append(f"{role}: {content}")
     return "\n\n".join(lines).strip()
 
 
-def _content_to_text(content: Any) -> str:
+def _content_to_text(
+    content: Any,
+    ephemeral_files: list[Path] | None = None,
+    save_media: bool = True,
+) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -725,12 +864,17 @@ def _content_to_text(content: Any) -> str:
                     img_info = item.get("image_url", {})
                     url = img_info.get("url", "") if isinstance(img_info, dict) else str(img_info)
                     if url.startswith("data:"):
-                        saved_path = _save_base64_media(url)
-                        if saved_path:
-                            pieces.append(
-                                f"صورة مرفقة محفوظة في المسار التالي على الجهاز:\n{saved_path}\n"
-                                "اقرأ هذه الصورة المرفقة في المسار المحدد (باستخدام أداة read_file) وحللها بدقة واستخرج كل النصوص المكتوبة فيها."
-                            )
+                        if save_media:
+                            saved_path = _save_base64_media(url)
+                            if saved_path:
+                                if ephemeral_files is not None:
+                                    ephemeral_files.append(saved_path)
+                                pieces.append(
+                                    f"صورة مرفقة محفوظة في المسار التالي على الجهاز:\n{saved_path}\n"
+                                    "اقرأ هذه الصورة المرفقة في المسار المحدد (باستخدام أداة read_file) وحللها بدقة واستخرج كل النصوص المكتوبة فيها."
+                                )
+                            else:
+                                pieces.append("[مرفق صورة base64]")
                         else:
                             pieces.append("[مرفق صورة base64]")
                     elif url.startswith("http://") or url.startswith("https://"):

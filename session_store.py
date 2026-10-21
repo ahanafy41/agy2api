@@ -78,6 +78,10 @@ class SessionStore:
     def forget(self, conversation_id: str) -> None:
         self._sessions.pop(conversation_id, None)
 
+    def all_ids(self) -> set[str]:
+        """Return all active conversation IDs tracked in the store."""
+        return set(self._sessions.keys())
+
     def _evict(self, protected: set[str]) -> list[str]:
         evicted: list[str] = []
         while len(self._sessions) > self._max:

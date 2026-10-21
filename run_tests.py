@@ -455,5 +455,129 @@ class YouTubeHandlerTests(unittest.TestCase):
             fake_video_path.unlink(missing_ok=True)
 
 
+class BackgroundJanitorAndEphemeralTests(unittest.TestCase):
+    """Test background janitor sweep, active session protection, and ephemeral media lifecycle."""
+
+    def test_run_janitor_sweep_lifecycle(self) -> None:
+        """run_janitor_sweep must sweep stale media, DBs, brain dirs, and logs while protecting active ones."""
+        from server import MEDIA_CACHE_DIR, run_janitor_sweep, _in_flight
+        from config import settings
+        from warm_worker import warm_worker
+        import shutil
+
+        now = time.time()
+        two_hours_ago = now - 7200
+
+        # 1. Media cache: stale vs fresh
+        stale_media = MEDIA_CACHE_DIR / "stale_janitor_test.png"
+        fresh_media = MEDIA_CACHE_DIR / "fresh_janitor_test.png"
+        stale_media.write_bytes(b"stale")
+        fresh_media.write_bytes(b"fresh")
+        os.utime(stale_media, (two_hours_ago, two_hours_ago))
+
+        # 2. Conversations: stale, fresh, and protected
+        conv_dir = settings.conversations_dir
+        conv_dir.mkdir(parents=True, exist_ok=True)
+        stale_conv = conv_dir / "stale_conv_123.db"
+        fresh_conv = conv_dir / "fresh_conv_456.db"
+        protected_conv = conv_dir / "protected_conv_789.db"
+
+        stale_conv.write_bytes(b"stale")
+        fresh_conv.write_bytes(b"fresh")
+        protected_conv.write_bytes(b"protected")
+
+        os.utime(stale_conv, (two_hours_ago, two_hours_ago))
+        os.utime(protected_conv, (two_hours_ago, two_hours_ago))
+
+        # Mark protected_conv as in-flight
+        _in_flight.add("protected_conv_789")
+
+        # 3. Brain dirs: stale
+        brain_dir = conv_dir.parent / "brain"
+        stale_brain = brain_dir / "stale_brain_dir"
+        stale_brain.mkdir(parents=True, exist_ok=True)
+        os.utime(stale_brain, (two_hours_ago, two_hours_ago))
+
+        # 4. Temp logs: stale
+        temp_log = Path(tempfile.gettempdir()) / "agy2api-stale-test.log"
+        temp_log.write_bytes(b"log")
+        os.utime(temp_log, (two_hours_ago, two_hours_ago))
+
+        try:
+            stats = run_janitor_sweep(max_age_seconds=3600)
+            self.assertGreaterEqual(stats["media"], 1)
+            self.assertGreaterEqual(stats["conversations"], 1)
+            self.assertGreaterEqual(stats["brain"], 1)
+            self.assertGreaterEqual(stats["logs"], 1)
+
+            # Assertions
+            self.assertFalse(stale_media.exists(), "Stale media should be removed")
+            self.assertTrue(fresh_media.exists(), "Fresh media should be retained")
+
+            self.assertFalse(stale_conv.exists(), "Stale conversation DB should be removed")
+            self.assertTrue(fresh_conv.exists(), "Fresh conversation DB should be retained")
+            self.assertTrue(protected_conv.exists(), "Protected conversation DB must NOT be removed")
+
+            self.assertFalse(stale_brain.exists(), "Stale brain directory should be removed")
+            self.assertFalse(temp_log.exists(), "Stale temp log file should be removed")
+        finally:
+            _in_flight.discard("protected_conv_789")
+            stale_media.unlink(missing_ok=True)
+            fresh_media.unlink(missing_ok=True)
+            stale_conv.unlink(missing_ok=True)
+            fresh_conv.unlink(missing_ok=True)
+            protected_conv.unlink(missing_ok=True)
+            shutil.rmtree(stale_brain, ignore_errors=True)
+            temp_log.unlink(missing_ok=True)
+
+    def test_warm_worker_and_session_store_helpers(self) -> None:
+        """WarmAgyWorker.get_active_cids and SessionStore.all_ids return tracked IDs."""
+        from warm_worker import warm_worker
+        from session_store import SessionStore
+
+        warm_worker.conversation_id = "test-cid-1"
+        warm_worker._standby_cid = "test-cid-2"
+        try:
+            cids = warm_worker.get_active_cids()
+            self.assertIn("test-cid-1", cids)
+            self.assertIn("test-cid-2", cids)
+        finally:
+            warm_worker.conversation_id = None
+            warm_worker._standby_cid = None
+
+        store = SessionStore(10)
+        store.remember("session-a", ["user:hello"])
+        store.remember("session-b", ["user:world"])
+        self.assertEqual(store.all_ids(), {"session-a", "session-b"})
+
+    def test_ephemeral_media_tracking_in_content_to_text(self) -> None:
+        """_content_to_text tracks ephemeral base64 files and respects save_media flag."""
+        from server import _content_to_text
+
+        sample_b64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+        content = [
+            {"type": "text", "text": "Describe:"},
+            {"type": "image_url", "image_url": {"url": sample_b64}},
+        ]
+
+        # 1. Tracking in ephemeral_files
+        ephemeral_files: list[Path] = []
+        text = _content_to_text(content, ephemeral_files=ephemeral_files, save_media=True)
+        self.assertEqual(len(ephemeral_files), 1)
+        saved_file = ephemeral_files[0]
+        self.assertTrue(saved_file.exists())
+        self.assertIn(str(saved_file), text)
+
+        # Immediate cleanup
+        saved_file.unlink(missing_ok=True)
+        self.assertFalse(saved_file.exists())
+
+        # 2. save_media=False (fingerprinting) creates no files
+        ephemeral_files_empty: list[Path] = []
+        text_fp = _content_to_text(content, ephemeral_files=ephemeral_files_empty, save_media=False)
+        self.assertEqual(len(ephemeral_files_empty), 0)
+        self.assertIn("[مرفق صورة base64]", text_fp)
+
+
 if __name__ == "__main__":
     unittest.main()

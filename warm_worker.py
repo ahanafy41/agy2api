@@ -213,6 +213,15 @@ class WarmAgyWorker:
     def is_alive(self) -> bool:
         return self.process is not None and self.process.returncode is None
 
+    def get_active_cids(self) -> set[str]:
+        """Return all active and standby conversation IDs."""
+        cids: set[str] = set()
+        if self.conversation_id:
+            cids.add(self.conversation_id)
+        if self._standby_cid:
+            cids.add(self._standby_cid)
+        return cids
+
     async def _prewarm_standby(self, target_model: str) -> None:
         try:
             if (
