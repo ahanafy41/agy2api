@@ -34,7 +34,7 @@ EMPTY_WS = Path.home() / "agy2api" / "empty_ws"
 class WarmAgyWorker:
     """Manages long-running, warm agy CLI processes with auto-rotation."""
 
-    def __init__(self, model: str = "gemini-3.8-flash-low", max_turns: int = 5):
+    def __init__(self, model: str = "gemini-3.8-flash-low", max_turns: int = 2):
         self.model = model
         self.max_turns = max_turns
         self.process: asyncio.subprocess.Process | None = None
@@ -157,6 +157,8 @@ class WarmAgyWorker:
             self._last_active_time = time.time()
             if self._idle_task is None or self._idle_task.done():
                 self._idle_task = asyncio.create_task(self._idle_monitor())
+            if (not self._standby_worker or self._standby_worker.returncode is not None) and (not self._standby_task or self._standby_task.done()):
+                self._standby_task = asyncio.create_task(self._prewarm_standby(self.model))
         finally:
             self._starting = False
 
@@ -272,16 +274,15 @@ class WarmAgyWorker:
                 self.model,
             )
 
-            # Trigger background pre-warm when session reaches half capacity
-            if (
-                self.turn_count >= 3
-                and (not self._standby_worker or self._standby_worker.returncode is not None)
-                and (not self._standby_task or self._standby_task.done())
-            ):
-                self._standby_task = asyncio.create_task(self._prewarm_standby(self.model))
+            # Proactive rotation: if standby is ready or turn limit reached
+            should_rotate = (
+                self._standby_worker is not None
+                and self._standby_worker.returncode is None
+                and self._standby_model == self.model
+                and self.turn_count >= 1
+            ) or (self.turn_count >= self.max_turns)
 
-            # Seamless auto-rotation when turn limit is reached
-            if self.turn_count >= self.max_turns:
+            if should_rotate:
                 if self._standby_worker and self._standby_worker.returncode is None and self._standby_model == self.model:
                     logger.info(
                         "WarmAgyWorker: Seamless swap to pre-warmed fresh session (turn_count=%d)",
@@ -299,6 +300,9 @@ class WarmAgyWorker:
                     logger.info("WarmAgyWorker: Pre-warming next session for upcoming turn...")
                     if not self._standby_task or self._standby_task.done():
                         self._standby_task = asyncio.create_task(self._prewarm_standby(self.model))
+            else:
+                if (not self._standby_worker or self._standby_worker.returncode is not None) and (not self._standby_task or self._standby_task.done()):
+                    self._standby_task = asyncio.create_task(self._prewarm_standby(self.model))
 
             return accumulated_text.strip()
 
