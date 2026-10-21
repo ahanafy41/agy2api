@@ -53,7 +53,7 @@ This wrapper does **not** handle Google authentication. You must configure the o
 ### 1. Installation
 
 ```bash
-git clone https://github.com/kamalyaser31/agy2api.git
+git clone https://github.com/ahanafy41/agy2api.git
 cd agy2api
 pip install -r requirements.txt
 ```
