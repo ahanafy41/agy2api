@@ -7,8 +7,6 @@
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Android%20(Termux)%20%7C%20macOS%20%7C%20Windows-green)](#quick-start)
 [![API](https://img.shields.io/badge/API-OpenAI%20%7C%20Google%20Gemini-orange)](#api-endpoints)
 
-[📖 **التوثيق باللغة العربية (Arabic Documentation)**](README_AR.md)
-
 ---
 
 ## 🌟 Key Innovations & Enhancements
@@ -158,6 +156,20 @@ curl -X POST http://127.0.0.1:7862/v1beta/models/gemini-3.8-flash-low:generateCo
 | `AGY_TIMEOUT` | Per-request timeout budget in seconds | `300` |
 | `AGY2API_STATEFUL` | Stateful conversation mode (preserves session DB) | `0` (false) |
 | `AGY2API_EXPOSE_REASONING` | Include reasoning output in completion chunks | `true` |
+
+---
+
+## 📱 Mobile & Screen Reader Integration (Jieshuo / CSR)
+
+`agy2api` acts as a seamless local gateway for mobile assistive tools, TalkBack shortcuts, and Jieshuo Screen Reader (Commentary Screen Reader - CSR) plugins:
+
+1. **Host**: `127.0.0.1`
+2. **Port**: `7862`
+3. **Bearer API Key**: `pwd` (or your custom `AGY2API_KEY`)
+4. **Endpoint**: Select either OpenAI chat format (`/v1/chat/completions`) or native Google Gemini format (`/v1beta/models/{model}:generateContent`).
+5. **Recommended Models**:
+   - `gemini-3.8-flash-low`: Sub-second to 2s latency, ideal for voice dictation and real-time typing corrections.
+   - `gemini-3.8-flash-medium`: Balanced model with high grammatical and dialectal precision.
 
 ---
 
