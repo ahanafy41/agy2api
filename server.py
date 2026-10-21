@@ -477,8 +477,7 @@ async def gemini_generate_content(model_action: str, request: Request):
                 if "youtube.com" in f_uri or "youtu.be" in f_uri:
                     prompt_parts.append(
                         f"رابط فيديو يوتيوب للتحليل:\n{f_uri}\n"
-                        "المطلوب: تفقد أو تصفح رابط اليوتيوب هذا (باستخدام أدوات الويب مثل read_url_content أو search_web أو الأدوات المتاحة) "
-                        "واستخرج عنوان الفيديو وموضوعه ومحتواه بدقة، وأجب عن طلب المستخدم."
+                        "المطلوب: فحص وتحليل هذا الفيديو بدقة، واستخراج عنوانه وموضوعه وتفاصيل محتواه، والإجابة عن طلب المستخدم."
                     )
                 elif f_uri.startswith("http://") or f_uri.startswith("https://"):
                     prompt_parts.append(
