@@ -23,3 +23,7 @@ stateful_home/
 .DS_Store
 .idea/
 .vscode/
+isolated_home/
+isolated_test_home/
+empty_ws/
+media_cache/
