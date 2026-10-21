@@ -159,9 +159,9 @@ curl -X POST http://127.0.0.1:7862/v1beta/models/gemini-3.8-flash-low:generateCo
 
 ---
 
-## 📱 Mobile & Screen Reader Integration (Jieshuo / CSR)
+## 📱 Mobile & Android Apps Integration
 
-`agy2api` acts as a seamless local gateway for mobile assistive tools, TalkBack shortcuts, and Jieshuo Screen Reader (Commentary Screen Reader - CSR) plugins:
+`agy2api` acts as a seamless local gateway for mobile automation, Android applications, and custom client scripts:
 
 1. **Host**: `127.0.0.1`
 2. **Port**: `7862`

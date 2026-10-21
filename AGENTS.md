@@ -8,7 +8,7 @@
 
 `agy2api` is a high-performance local API bridge that exposes the logged-in official Google Antigravity CLI (`agy`) through standard REST endpoints:
 - **OpenAI Compatible**: `POST /v1/chat/completions` (with reasoning effort, SSE streaming, and fake streaming).
-- **Google Gemini Compatible**: `POST /v1beta/models/{model}:generateContent` (for zero-config drop-in use with Android accessibility tools, Jieshuo screen reader, and Gemini client SDKs).
+- **Google Gemini Compatible**: `POST /v1beta/models/{model}:generateContent` (for zero-config drop-in use with mobile apps, local automation scripts, and Gemini client SDKs).
 
 ### Architecture Diagram
 ```
