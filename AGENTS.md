@@ -37,6 +37,7 @@
 | File / Folder | Role & Single Responsibility |
 | :--- | :--- |
 | `server.py` | FastAPI application, route handlers, multimodal media ingestion, and error responses. |
+| `youtube_handler.py` | Two-tier hybrid YouTube ingestion: instant transcript extraction and ephemeral micro-video visual inspection. |
 | `warm_worker.py` | Manages persistent `agy` CLI processes in `stream-json` mode with proactive standby rotation. |
 | `agy_runner.py` | Manages cold subprocess runs, SQLite database discovery, and Windows process tree guards. |
 | `conversation_reader.py` | Reads step 15 / status 3 results from SQLite databases created by `agy`. |

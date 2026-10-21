@@ -23,7 +23,7 @@ Unlike standard CLI wrappers that invoke cold processes on every turn (incurring
 - **Base64 Images**: Decodes and feeds image inputs (JPEG, PNG, WEBP) directly to Antigravity vision models.
 - **PDF Documents & Books**: Extracts and analyzes local PDF documents.
 - **Local Audio & Video**: Inspects media files with proper MIME type classification (MP4, MKV, MP3, WAV, etc.).
-- **YouTube Links**: Ingests direct YouTube links for video summarization and Q&A.
+- **Two-Tier YouTube Ingestion Engine**: Instant metadata & spoken transcript extraction via `yt-dlp` for text queries; automatic ephemeral 144p micro-video download for blind/visual scene descriptions with immediate post-response cleanup.
 - **Zero-Footprint Media Cache (`media_cache/`)**: Automatically wipes temporary media files immediately upon response delivery.
 
 ### 3. 📱 Mobile & Termux Native (Android, Linux & Windows)
