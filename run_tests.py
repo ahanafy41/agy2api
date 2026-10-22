@@ -566,6 +566,41 @@ class BackgroundJanitorAndEphemeralTests(unittest.TestCase):
         self.assertEqual(len(ephemeral_files_empty), 0)
         self.assertIn("[مرفق صورة base64]", text_fp)
 
+    def test_isolated_worker_recycle_policy(self) -> None:
+        """IsolatedWorker should correctly enforce 30-min TTL, max turns, and model switching."""
+        from isolated_session import IsolatedWorker
+
+        w = IsolatedWorker(session_ttl=1800.0, max_turns=20, idle_timeout=600.0)
+        # Not alive yet -> should recycle (spawn)
+        self.assertTrue(w.should_recycle("gemini-3.8-flash-low", "low"))
+
+        # Fake alive process
+        class FakeProc:
+            returncode = None
+        w.proc = FakeProc()  # type: ignore
+        w.created_at = time.time()
+        w.current_model = "gemini-3.8-flash-low"
+        w.current_effort = "low"
+        w.turn_count = 5
+
+        # Healthy within TTL -> should NOT recycle
+        self.assertFalse(w.should_recycle("gemini-3.8-flash-low", "low"))
+
+        # Model change -> should recycle
+        self.assertTrue(w.should_recycle("claude-sonnet-4-6", "low"))
+
+        # Effort change -> should recycle
+        self.assertTrue(w.should_recycle("gemini-3.8-flash-low", "high"))
+
+        # Turn count reached (>= 20) -> should recycle
+        w.turn_count = 20
+        self.assertTrue(w.should_recycle("gemini-3.8-flash-low", "low"))
+
+        # 30-min TTL expired -> should recycle
+        w.turn_count = 5
+        w.created_at = time.time() - 1801.0
+        self.assertTrue(w.should_recycle("gemini-3.8-flash-low", "low"))
+
 
 if __name__ == "__main__":
     unittest.main()

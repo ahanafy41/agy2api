@@ -32,6 +32,7 @@ from config import is_loopback_host, resolve_model, settings
 from fake_stream import make_heartbeat, sse_event, stream_chunks
 from models import ChatCompletionRequest, ModelInfo, ModelList
 from session_store import SessionStore, fingerprint
+from isolated_session import worker
 from youtube_handler import (
     extract_youtube_urls,
     is_visual_request,
@@ -242,11 +243,16 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     janitor_task = asyncio.create_task(
         _background_janitor(interval_seconds=settings.janitor_interval, max_age_seconds=settings.janitor_max_age)
     )
+    if settings.fast_session:
+        worker.start_sweeper()
 
     try:
         yield
     finally:
         janitor_task.cancel()
+        if settings.fast_session:
+            worker.stop_sweeper()
+            await worker.stop(cleanup=True)
         try:
             await janitor_task
         except asyncio.CancelledError:
@@ -335,6 +341,13 @@ async def _execute_run(
                 return await _run_agy_guarded(prompt, model, resume_id, keep, effort)
             finally:
                 _in_flight.discard(resume_id)
+
+    if settings.fast_session:
+        try:
+            return await worker.run_turn_result(prompt, model=model or "gemini-3.8-flash-low", effort=effort)
+        except Exception as exc:
+            logger.warning("IsolatedWorker turn failed (%s); falling back to one-shot agy: %s", type(exc).__name__, exc)
+
     return await _run_agy_guarded(prompt, model, None, keep, effort)
 
 
