@@ -640,5 +640,30 @@ class BackgroundJanitorAndEphemeralTests(unittest.TestCase):
         self.assertTrue(w.should_recycle("gemini-3.8-flash-low", "low"))
 
 
+class GeminiEndpointTests(unittest.TestCase):
+    def test_make_finish_chunk_with_usage(self) -> None:
+        from fake_stream import make_finish_chunk
+        chunk = make_finish_chunk(
+            "cid1", 12345, "gemini-3.8-flash-low", "stop",
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        )
+        self.assertEqual(chunk["choices"][0]["finish_reason"], "stop")
+        self.assertIn("usage", chunk)
+        self.assertEqual(chunk["usage"]["prompt_tokens"], 10)
+        self.assertEqual(chunk["usage"]["total_tokens"], 15)
+
+    def test_gemini_models_endpoint(self) -> None:
+        import asyncio
+        import json
+        from server import gemini_models
+        res = asyncio.run(gemini_models())
+        data = json.loads(res.body.decode("utf-8"))
+        self.assertIn("models", data)
+        self.assertTrue(len(data["models"]) > 0)
+        first = data["models"][0]
+        self.assertTrue(first["name"].startswith("models/"))
+        self.assertIn("generateContent", first["supportedGenerationMethods"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -727,6 +727,11 @@ async def gemini_generate_content(model_action: str, request: Request):
             else:
                 answer = "عذراً يا ريس، حدث خطأ مؤقت في الاتصال. يرجى إعادة المحاولة."
 
+        u_dict = getattr(getattr(res, "response", None), "usage", {}) or {}
+        p_count = u_dict.get("input_tokens", 0)
+        c_count = u_dict.get("output_tokens", len(answer))
+        t_count = u_dict.get("total_tokens", p_count + c_count)
+
         return JSONResponse(
             content={
                 "candidates": [
@@ -740,9 +745,9 @@ async def gemini_generate_content(model_action: str, request: Request):
                     }
                 ],
                 "usageMetadata": {
-                    "promptTokenCount": 0,
-                    "candidatesTokenCount": len(answer),
-                    "totalTokenCount": len(answer),
+                    "promptTokenCount": p_count,
+                    "candidatesTokenCount": c_count,
+                    "totalTokenCount": t_count,
                 },
             }
         )
@@ -798,7 +803,7 @@ async def _stream_response(
             if worker_cid and sigs:
                 _record_session(worker_cid, sigs)
 
-            yield sse_event(make_finish_chunk(cid_str, created_ts, model, finish_reason="stop"))
+            yield sse_event(make_finish_chunk(cid_str, created_ts, model, finish_reason="stop", usage=usage if usage else None))
             yield sse_event("[DONE]")
             logger.info(
                 "ok (real-time stream): model=%s answer_chars=%d cid=%s in %.2fs",

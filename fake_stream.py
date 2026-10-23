@@ -61,8 +61,17 @@ def make_delta_chunk(cid: str, created: int, model: str, text: str) -> dict:
     return _chunk(cid, created, model, {"content": text}, None)
 
 
-def make_finish_chunk(cid: str, created: int, model: str, finish_reason: str = "stop") -> dict:
-    return _chunk(cid, created, model, {}, finish_reason)
+def make_finish_chunk(
+    cid: str,
+    created: int,
+    model: str,
+    finish_reason: str = "stop",
+    usage: dict | None = None,
+) -> dict:
+    chunk = _chunk(cid, created, model, {}, finish_reason)
+    if usage:
+        chunk["usage"] = usage
+    return chunk
 
 
 def sse_event(data: dict | str) -> bytes:
