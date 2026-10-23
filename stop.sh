@@ -25,4 +25,5 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 # Clean up any lingering isolated agy workers
+pkill -f "isolated_workspace" 2>/dev/null || true
 pkill -f "empty_ws" 2>/dev/null || true

@@ -23,6 +23,7 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 touch "$HOME/.gemini/antigravity-cli/last_check.timestamp" 2>/dev/null || true
+termux-wake-lock 2>/dev/null || true
 
 export AGY2API_KEY="${AGY2API_KEY:-pwd}"
 export PORT="${PORT:-7862}"

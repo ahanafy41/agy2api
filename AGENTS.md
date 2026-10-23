@@ -20,14 +20,15 @@
                    +-------------------------+-------------------------+
                    |                                                   |
                    v (Default: Stateless / Warm)                       v (Fallback / Stateful)
-    +------------------------------+                 +-------------------------------+
-    |  Warm Worker (warm_worker.py)|                 |   CLI Runner (agy_runner.py)  |
-    |  - stream-json pipe IPC      |                 |   - One-shot `agy --print`    |
-    |  - Sub-2.5s turn latency     |                 |   - SQLite DB step extractor  |
-    |  - Proactive Standby Rotation|                 |   - Protobuf wire decoder     |
-    |  - Zero Context Bloat        |                 |   - SessionStore LRU cache    |
-    |  - Idle Auto-Recycle (90s)   |                 +-------------------------------+
-    +------------------------------+
+    +------------------------------------+                 +-------------------------------+
+    | Isolated Worker                    |                 |   CLI Runner (agy_runner.py)  |
+    | (isolated_session.py)              |                 |   - One-shot `agy --print`    |
+    | - stream-json pipe IPC             |                 |   - SQLite DB step extractor  |
+    | - Native Real-time Token Streaming |                 |   - Protobuf wire decoder     |
+    | - Sub-2.5s turn latency            |                 |   - SessionStore LRU cache    |
+    | - Context Bloat Protection         |                 +-------------------------------+
+    | - Idle Auto-Recycle (600s)         |
+    +------------------------------------+
 ```
 
 ---
@@ -38,7 +39,7 @@
 | :--- | :--- |
 | `server.py` | FastAPI application, route handlers, multimodal media ingestion, and error responses. |
 | `youtube_handler.py` | Two-tier hybrid YouTube ingestion: instant transcript extraction and ephemeral micro-video visual inspection. |
-| `warm_worker.py` | Manages persistent `agy` CLI processes in `stream-json` mode with proactive standby rotation. |
+| `isolated_session.py` | Manages persistent `agy` CLI processes in `stream-json` mode with real-time token streaming and auto-recycling. |
 | `agy_runner.py` | Manages cold subprocess runs, SQLite database discovery, and Windows process tree guards. |
 | `conversation_reader.py` | Reads step 15 / status 3 results from SQLite databases created by `agy`. |
 | `proto_decoder.py` | Pure-Python wire protobuf parser for decoding `steps.step_payload`. Zero external dependencies. |

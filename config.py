@@ -145,8 +145,9 @@ class Settings:
     # Recycles every 30 minutes (session_ttl) to prevent context accumulation and memory bloat.
     fast_session: bool = _bool_env("AGY2API_FAST_SESSION", True)
     session_ttl: float = float(os.getenv("AGY_SESSION_TTL", "1800"))
-    max_turns: int = int(os.getenv("AGY_MAX_TURNS", "20"))
-    idle_timeout: float = float(os.getenv("AGY_IDLE_TIMEOUT", "600"))
+    max_turns: int = int(os.getenv("AGY_MAX_TURNS", "2"))
+    # 0 = keep-alive (never sleep due to idle). Keeps a hot worker always ready.
+    idle_timeout: float = float(os.getenv("AGY_IDLE_TIMEOUT", "0"))
     # Experimental: keep a persistent agy conversation per chat and send only the
     # new turn each request (instead of resending the full history). Smaller
     # per-turn payloads finish faster and are less likely to hit an upstream

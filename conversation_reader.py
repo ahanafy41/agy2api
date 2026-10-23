@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from proto_decoder import ProtoField, decode_message, find_fields, first_text, raw_text, walk_text
@@ -34,6 +34,7 @@ class AgResponse:
     tool_summaries: tuple[str, ...] = ()
     db_path: str = ""
     truncated: bool = False
+    usage: dict[str, int] = field(default_factory=dict)
 
 
 class UpstreamError(ValueError):

@@ -29,7 +29,15 @@ from agy_runner import (
     sweep_orphan_sidecars,
 )
 from config import is_loopback_host, resolve_model, settings
-from fake_stream import make_heartbeat, sse_event, stream_chunks
+from fake_stream import (
+    completion_id,
+    make_delta_chunk,
+    make_finish_chunk,
+    make_heartbeat,
+    make_role_chunk,
+    sse_event,
+    stream_chunks,
+)
 from models import ChatCompletionRequest, ModelInfo, ModelList
 from session_store import SessionStore, fingerprint
 from isolated_session import worker
@@ -245,6 +253,9 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     )
     if settings.fast_session:
         worker.start_sweeper()
+        # Pre-warm the isolated worker immediately in background on startup:
+        # this completely eliminates the cold-start delay for the first request!
+        asyncio.create_task(worker.get_or_spawn("gemini-3.8-flash-low", "low"))
 
     try:
         yield
@@ -335,6 +346,11 @@ async def _execute_run(
     (SillyTavern) serialize turns per chat — they wait for each reply — so this
     is not hit in practice; concurrent turns of one chat are unsupported."""
     if resume_id:
+        if settings.fast_session and worker.is_alive() and worker.cid == resume_id:
+            try:
+                return await worker.run_turn_result(prompt, model=model or "gemini-3.8-flash-low", effort=effort)
+            except Exception as exc:
+                logger.warning("IsolatedWorker resumed turn failed (%s); falling back to guarded agy: %s", type(exc).__name__, exc)
         async with _conv_lock(resume_id):
             _in_flight.add(resume_id)
             try:
@@ -435,7 +451,7 @@ async def chat_completions(
     if yt_urls:
         augmented_prompt_parts = [prompt]
         for y_url in yt_urls:
-            yt_prompt, temp_file = process_youtube_request(y_url, prompt, MEDIA_CACHE_DIR)
+            yt_prompt, temp_file = await asyncio.to_thread(process_youtube_request, y_url, prompt, MEDIA_CACHE_DIR)
             if temp_file:
                 ephemeral_files.append(temp_file)
             augmented_prompt_parts.append(yt_prompt)
@@ -468,6 +484,7 @@ async def chat_completions(
 
         _record_session(Path(result.db_path).stem, sigs)
         fr = "length" if result.response.truncated else "stop"
+        usage_dict = getattr(result.response, "usage", {}) or {}
         logger.info(
             "ok (non-stream): model=%s answer_chars=%d reasoning_chars=%d truncated=%s db=%s resume=%s %.1fs",
             model, len(result.response.answer), len(result.response.reasoning),
@@ -479,6 +496,7 @@ async def chat_completions(
                 reasoning=result.response.reasoning,
                 model=model,
                 finish_reason=fr,
+                usage=usage_dict,
             )
         )
     finally:
@@ -599,7 +617,9 @@ async def gemini_generate_content(model_action: str, request: Request):
                 )
                 if yt_urls and not has_file_data_yt:
                     for y_url in yt_urls:
-                        yt_prompt, yt_file = process_youtube_request(y_url, user_context or t_val, MEDIA_CACHE_DIR)
+                        yt_prompt, yt_file = await asyncio.to_thread(
+                            process_youtube_request, y_url, user_context or t_val, MEDIA_CACHE_DIR
+                        )
                         if yt_file:
                             ephemeral_files.append(yt_file)
                         prompt_parts.append(yt_prompt)
@@ -639,7 +659,9 @@ async def gemini_generate_content(model_action: str, request: Request):
                 f_mime = str(fdat.get("mime_type") or fdat.get("mimeType", "")).strip().lower()
 
                 if "youtube.com" in f_uri or "youtu.be" in f_uri:
-                    yt_prompt, yt_file = process_youtube_request(f_uri, user_context or "فحص وتحليل هذا الفيديو بدقة والإجابة عن طلب المستخدم", MEDIA_CACHE_DIR)
+                    yt_prompt, yt_file = await asyncio.to_thread(
+                        process_youtube_request, f_uri, user_context or "فحص وتحليل هذا الفيديو بدقة والإجابة عن طلب المستخدم", MEDIA_CACHE_DIR
+                    )
                     if yt_file:
                         ephemeral_files.append(yt_file)
                     prompt_parts.append(yt_prompt)
@@ -745,6 +767,47 @@ async def _stream_response(
     cleanup_files: list[Path] | None = None,
 ) -> AsyncIterator[bytes]:
     started = time.time()
+    cid_str = completion_id()
+    created_ts = int(started)
+
+    # Real-time token streaming via persistent stream-json worker
+    can_use_worker = settings.fast_session and (not resume_id or (worker.is_alive() and worker.cid == resume_id))
+    if can_use_worker:
+        try:
+            yield sse_event(make_role_chunk(cid_str, created_ts, model))
+            worker_cid = None
+            final_answer = ""
+            final_reasoning = ""
+            usage = {}
+
+            async for chunk in worker.run_turn_stream(prompt, model=agy_model or "gemini-3.8-flash-low", effort=effort):
+                if await request.is_disconnected():
+                    logger.warning("client disconnected during real-time stream after %.1fs", time.time() - started)
+                    return
+                c_type = chunk.get("type")
+                if c_type == "delta":
+                    d_text = chunk.get("delta", "")
+                    if d_text:
+                        yield sse_event(make_delta_chunk(cid_str, created_ts, model, d_text))
+                elif c_type == "done":
+                    worker_cid = chunk.get("cid")
+                    final_answer = chunk.get("response", "")
+                    final_reasoning = chunk.get("reasoning", "")
+                    usage = chunk.get("usage", {})
+
+            if worker_cid and sigs:
+                _record_session(worker_cid, sigs)
+
+            yield sse_event(make_finish_chunk(cid_str, created_ts, model, finish_reason="stop"))
+            yield sse_event("[DONE]")
+            logger.info(
+                "ok (real-time stream): model=%s answer_chars=%d cid=%s in %.2fs",
+                model, len(final_answer), worker_cid, time.time() - started,
+            )
+            return
+        except Exception as exc:
+            logger.warning("Real-time stream failed (%s), falling back to guarded run: %s", type(exc).__name__, exc)
+
     task = asyncio.create_task(_execute_run(prompt, agy_model, resume_id, keep, effort))
     try:
         while not task.done():
@@ -842,11 +905,21 @@ def _content_to_text(
     return str(content)
 
 
-def build_completion_response(answer: str, reasoning: str, model: str, finish_reason: str = "stop") -> dict:
+def build_completion_response(
+    answer: str,
+    reasoning: str,
+    model: str,
+    finish_reason: str = "stop",
+    usage: dict[str, int] | None = None,
+) -> dict:
     created = int(time.time())
     message: dict[str, Any] = {"role": "assistant", "content": answer}
     if settings.expose_reasoning and reasoning:
         message["reasoning_content"] = reasoning
+
+    prompt_tokens = usage.get("input_tokens", 0) if usage else 0
+    completion_tokens = usage.get("output_tokens", len(answer)) if usage else len(answer)
+    total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens) if usage else len(answer)
 
     return {
         "id": f"chatcmpl-{created}",
@@ -861,9 +934,9 @@ def build_completion_response(answer: str, reasoning: str, model: str, finish_re
             }
         ],
         "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": len(answer),
-            "total_tokens": len(answer),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
         },
     }
 

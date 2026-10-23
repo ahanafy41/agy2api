@@ -13,10 +13,10 @@
 
 Unlike standard CLI wrappers that invoke cold processes on every turn (incurring 15–20s startup overhead), this enhanced edition introduces a production-ready, low-latency architecture:
 
-### 1. ⚡ Ultra-Fast Warm Worker Engine (`warm_worker.py`)
-- **Sub-2.5s Turn Latency**: Retains official `agy` CLI processes hot in memory using native `--input-format stream-json --output-format stream-json`.
-- **Proactive Standby Rotation (Zero Context Bloat)**: Automatically pre-warms a standby worker in the background and rotates sessions seamlessly in 0.0s, eliminating the conversation accumulation that causes long-term latency degradation.
-- **Auto-Recycling & Idle Monitor**: Recycles inactive sessions after 90 seconds of idle time to conserve system RAM.
+### 1. ⚡ Ultra-Fast Worker Engine (`isolated_session.py`)
+- **Sub-2.5s Turn Latency & Real-Time Token Streaming**: Retains official `agy` CLI processes hot in memory using native `--input-format stream-json --output-format stream-json` and streams tokens live as they are generated.
+- **Context Bloat & Cross-Talk Protection**: Automatically recycles sessions and cleans conversation databases to prevent $O(N^2)$ quadratic token multiplication.
+- **Auto-Recycling & Idle Monitor**: Recycles inactive sessions after idle timeout to conserve system RAM and battery.
 - **Zero Zombie Processes**: Robust process-group sandboxing (`start_new_session=True` & `os.killpg`) guarantees clean process lifecycles.
 
 ### 2. 🖼️ Native Multimodal Support (Images, PDFs, Videos & YouTube)

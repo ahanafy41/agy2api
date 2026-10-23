@@ -19,7 +19,14 @@ from pathlib import Path
 from agy_runner import check_windows_command_length
 from config import MODEL_MAP, Settings, resolve_model
 from conversation_reader import UpstreamError, read_response
-from fake_stream import build_chunks, split_text, sse_event
+from fake_stream import (
+    build_chunks,
+    make_delta_chunk,
+    make_finish_chunk,
+    make_role_chunk,
+    split_text,
+    sse_event,
+)
 from models import ChatCompletionRequest, ChatMessage
 from session_store import SessionStore, fingerprint
 
@@ -262,6 +269,37 @@ class FakeStreamHelpersTests(unittest.TestCase):
         self.assertTrue(event_bytes.startswith(b"data: "))
         self.assertTrue(event_bytes.endswith(b"\n\n"))
         self.assertIn(b'"test":"value"', event_bytes)
+
+    def test_realtime_stream_chunk_helpers(self) -> None:
+        """Verify role, delta, and finish chunk format for real-time SSE streaming."""
+        cid = "test-cid"
+        ts = 1234567890
+        model = "gemini-3.8-flash-low"
+
+        role_chunk = make_role_chunk(cid, ts, model)
+        self.assertEqual(role_chunk["choices"][0]["delta"]["role"], "assistant")
+        self.assertIsNone(role_chunk["choices"][0]["finish_reason"])
+
+        delta_chunk = make_delta_chunk(cid, ts, model, "Hello ")
+        self.assertEqual(delta_chunk["choices"][0]["delta"]["content"], "Hello ")
+        self.assertIsNone(delta_chunk["choices"][0]["finish_reason"])
+
+        finish_chunk = make_finish_chunk(cid, ts, model, finish_reason="stop")
+        self.assertEqual(finish_chunk["choices"][0]["finish_reason"], "stop")
+
+    def test_build_completion_response_preserves_real_token_usage(self) -> None:
+        """build_completion_response must map real usage tokens accurately."""
+        from server import build_completion_response
+        usage_payload = {"input_tokens": 150, "output_tokens": 45, "total_tokens": 195}
+        resp = build_completion_response(
+            answer="This is a test answer",
+            reasoning="Test reasoning",
+            model="gemini-3.8-flash-low",
+            usage=usage_payload,
+        )
+        self.assertEqual(resp["usage"]["prompt_tokens"], 150)
+        self.assertEqual(resp["usage"]["completion_tokens"], 45)
+        self.assertEqual(resp["usage"]["total_tokens"], 195)
 
 
 class WindowsCommandLineGuardTests(unittest.TestCase):

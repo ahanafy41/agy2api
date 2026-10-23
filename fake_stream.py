@@ -53,6 +53,18 @@ def make_heartbeat(model: str) -> dict:
     return _chunk(completion_id(), int(time.time()), model, {"content": ""}, None)
 
 
+def make_role_chunk(cid: str, created: int, model: str) -> dict:
+    return _chunk(cid, created, model, {"role": "assistant"}, None)
+
+
+def make_delta_chunk(cid: str, created: int, model: str, text: str) -> dict:
+    return _chunk(cid, created, model, {"content": text}, None)
+
+
+def make_finish_chunk(cid: str, created: int, model: str, finish_reason: str = "stop") -> dict:
+    return _chunk(cid, created, model, {}, finish_reason)
+
+
 def sse_event(data: dict | str) -> bytes:
     if isinstance(data, str):
         payload = data
