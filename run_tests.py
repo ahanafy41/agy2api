@@ -665,5 +665,47 @@ class GeminiEndpointTests(unittest.TestCase):
         self.assertIn("generateContent", first["supportedGenerationMethods"])
 
 
+class WebStudioEndpointTests(unittest.TestCase):
+    """Test web studio frontend endpoints and static asset serving."""
+
+    def test_root_serves_html(self) -> None:
+        import asyncio
+        import httpx
+        from server import app
+        async def run():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                res = await client.get("/")
+                self.assertEqual(res.status_code, 200)
+                self.assertIn("text/html", res.headers.get("content-type", ""))
+                self.assertIn("agy2api Web Studio", res.text)
+        asyncio.run(run())
+
+    def test_ui_route_serves_html(self) -> None:
+        import asyncio
+        import httpx
+        from server import app
+        async def run():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                res = await client.get("/ui")
+                self.assertEqual(res.status_code, 200)
+                self.assertIn("text/html", res.headers.get("content-type", ""))
+        asyncio.run(run())
+
+    def test_static_assets_served(self) -> None:
+        import asyncio
+        import httpx
+        from server import app
+        async def run():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                res_css = await client.get("/static/style.css")
+                self.assertEqual(res_css.status_code, 200)
+                res_js = await client.get("/static/app.js")
+                self.assertEqual(res_js.status_code, 200)
+        asyncio.run(run())
+
+
 if __name__ == "__main__":
     unittest.main()

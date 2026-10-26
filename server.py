@@ -17,8 +17,9 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 
 from pathlib import Path
 
@@ -289,8 +290,21 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             pass
 
 
+WEB_DIR = Path(__file__).resolve().parent / "web"
+WEB_DIR.mkdir(parents=True, exist_ok=True)
+
 app = FastAPI(title="agy2api", version="1.1.0", lifespan=_lifespan)
+app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 security = HTTPBearer(auto_error=False)
+
+
+@app.api_route("/", methods=["GET", "HEAD"], response_class=FileResponse)
+@app.api_route("/ui", methods=["GET", "HEAD"], response_class=FileResponse)
+async def serve_ui() -> FileResponse:
+    index_file = WEB_DIR / "index.html"
+    if not index_file.exists():
+        raise HTTPException(status_code=404, detail="Web Studio frontend not found")
+    return FileResponse(index_file, media_type="text/html")
 
 
 def _stateful_wipe() -> None:

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>agy2api Web Studio</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Skip to main content link for screen reader users -->
+    <a href="#main-content" class="skip-link">تخطي إلى المحتوى الرئيسي</a>
+
+    <!-- Live announcer for screen reader notifications -->
+    <div id="sr-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <div class="app-layout">
+        <!-- Application Header -->
+        <header class="app-header" role="banner">
+            <div class="header-brand">
+                <div class="brand-title-group">
+                    <h1 class="brand-title">agy2api Web Studio</h1>
+                    <span class="brand-sub">بوابة الذكاء الاصطناعي المحلية</span>
+                </div>
+                <div class="server-status" id="server-status" role="status" aria-label="حالة الاتصال بالسيرفر">
+                    <span class="status-dot status-offline" id="status-dot"></span>
+                    <span class="status-text" id="status-text">جاري الاتصال...</span>
+                </div>
+            </div>
+
+            <div class="header-controls">
+                <div class="control-group">
+                    <label for="model-select" class="control-label">النموذج:</label>
+                    <select id="model-select" class="select-input" aria-label="اختر النموذج">
+                        <option value="gemini-3.8-flash-low">Gemini 3.8 Flash (Low)</option>
+                        <option value="gemini-3.8-flash-medium">Gemini 3.8 Flash (Medium)</option>
+                        <option value="gemini-3.8-flash-high">Gemini 3.8 Flash (High)</option>
+                        <option value="claude-sonnet-4.6">Claude Sonnet 4.6 (Thinking)</option>
+                        <option value="claude-opus-4.6">Claude Opus 4.6 (Thinking)</option>
+                        <option value="gpt-oss-120b">GPT-OSS 120B</option>
+                    </select>
+                </div>
+
+                <div class="control-group" id="effort-group">
+                    <label for="effort-select" class="control-label">مستوى التفكير:</label>
+                    <select id="effort-select" class="select-input" aria-label="مستوى جهد التفكير">
+                        <option value="low">خفيف (Low)</option>
+                        <option value="medium" selected>متوسط (Medium)</option>
+                        <option value="high">عميق (High)</option>
+                    </select>
+                </div>
+
+                <div class="header-actions">
+                    <button type="button" id="new-chat-btn" class="btn btn-secondary" aria-label="بدء محادثة جديدة">
+                        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                        <span>محادثة جديدة</span>
+                    </button>
+                    <button type="button" id="open-settings-btn" class="btn btn-icon" aria-label="إعدادات الـ API والتوكن" title="الإعدادات">
+                        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </button>
+                    <button type="button" id="toggle-inspector-btn" class="btn btn-icon" aria-expanded="false" aria-controls="inspector-drawer" aria-label="لوحة فحص الـ API للمطورين" title="فحص الـ API">
+                        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content" class="app-main">
+            <!-- Chat Container -->
+            <section class="chat-viewport" aria-label="سجل المحادثة">
+                <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-relevant="additions text">
+                    <!-- Welcome Card -->
+                    <article class="welcome-card" aria-label="رسالة ترحيب ومعلومات الاستخدام">
+                        <h2>مرحباً بك في agy2api Web Studio</h2>
+                        <p>استمتع بتجربة كامل قدرات الـ API محلياً بسرعة وأمان:</p>
+                        <ul class="feature-list">
+                            <li><strong>دعم الموديلات المتقدمة:</strong> Gemini 3.8 Flash و Claude 4.6 و GPT-OSS مع مستويات التفكير.</li>
+                            <li><strong>بث مباشر Real-time Streaming:</strong> عرض التوكنز وخطوات التفكير لحظة بلحظة.</li>
+                            <li><strong>متعدد الوسائط (Multimodal):</strong> أرفق صور، ملفات صوتية، مستندات PDF، أو روابط يوتيوب.</li>
+                            <li><strong>لوحة المطورين:</strong> فحص أوامر cURL واستجابات JSON واستهلاك التوكنز والوقت.</li>
+                        </ul>
+                    </article>
+                </div>
+            </section>
+
+            <!-- Input Area -->
+            <footer class="input-panel" role="region" aria-label="منطقة إدخال الرسالة">
+                <!-- Attachments Preview Bar -->
+                <div id="attachments-bar" class="attachments-bar" hidden aria-label="الملفات المرفقة حالياً"></div>
+
+                <!-- Input Form -->
+                <form id="chat-form" class="chat-form" onsubmit="return false;">
+                    <div class="input-controls-left">
+                        <!-- Media File Input -->
+                        <input type="file" id="media-file-input" class="sr-only" multiple accept="image/*,video/*,audio/*,.pdf" aria-label="اختر ملفات من جهازك">
+                        <button type="button" id="attach-btn" class="btn btn-icon" aria-label="إرفاق ملف صورة أو صوت أو فيديو أو PDF" title="إرفاق ملف">
+                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                        </button>
+                        <!-- YouTube Input Button -->
+                        <button type="button" id="yt-btn" class="btn btn-icon" aria-label="إدراج رابط فيديو يوتيوب" title="إدراج رابط يوتيوب">
+                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"/><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="textarea-wrapper">
+                        <textarea id="prompt-input" class="prompt-textarea" rows="1" placeholder="اكتب استفسارك أو طلبك هنا... (Ctrl+Enter للإرسال)" aria-label="اكتب رسالتك"></textarea>
+                    </div>
+
+                    <div class="input-controls-right">
+                        <button type="submit" id="send-btn" class="btn btn-primary" aria-label="إرسال الرسالة">
+                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                            <span>إرسال</span>
+                        </button>
+                        <button type="button" id="stop-btn" class="btn btn-danger" hidden aria-label="إيقاف التوليد">
+                            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg>
+                            <span>إيقاف</span>
+                        </button>
+                    </div>
+                </form>
+            </footer>
+        </main>
+
+        <!-- Developer Inspector Drawer -->
+        <aside id="inspector-drawer" class="inspector-drawer" hidden aria-labelledby="inspector-heading" aria-modal="false">
+            <div class="drawer-header">
+                <h2 id="inspector-heading" class="drawer-title">فحص الـ API للمطورين</h2>
+                <button type="button" id="close-inspector-btn" class="btn btn-icon" aria-label="إغلاق لوحة الفحص">
+                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+
+            <!-- Metrics Bar -->
+            <div class="metrics-grid" role="region" aria-label="إحصائيات آخر طلب">
+                <div class="metric-card">
+                    <span class="metric-label">زمن الاستجابة</span>
+                    <span class="metric-value" id="metric-latency">0 ms</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">استهلاك التوكنز</span>
+                    <span class="metric-value" id="metric-tokens">0 tokens</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">حالة HTTP</span>
+                    <span class="metric-value" id="metric-status">جاهز</span>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs-header" role="tablist" aria-label="أقسام الفحص">
+                <button role="tab" id="tab-curl" class="tab-btn active" aria-selected="true" aria-controls="panel-curl">أمر cURL</button>
+                <button role="tab" id="tab-req" class="tab-btn" aria-selected="false" aria-controls="panel-req">طلب JSON</button>
+                <button role="tab" id="tab-res" class="tab-btn" aria-selected="false" aria-controls="panel-res">استجابة JSON</button>
+            </div>
+
+            <!-- Panels -->
+            <div class="tab-panels">
+                <div id="panel-curl" class="tab-panel active" role="tabpanel" aria-labelledby="tab-curl">
+                    <div class="code-toolbar">
+                        <span>Terminal cURL command:</span>
+                        <button type="button" class="btn btn-sm btn-secondary copy-btn" data-target="code-curl" aria-label="نسخ أمر cURL">نسخ</button>
+                    </div>
+                    <pre class="code-block"><code id="code-curl"># سيظهر أمر cURL هنا بعد إرسال أول طلب</code></pre>
+                </div>
+
+                <div id="panel-req" class="tab-panel" hidden role="tabpanel" aria-labelledby="tab-req">
+                    <div class="code-toolbar">
+                        <span>Request Payload:</span>
+                        <button type="button" class="btn btn-sm btn-secondary copy-btn" data-target="code-req" aria-label="نسخ بيانات الطلب">نسخ</button>
+                    </div>
+                    <pre class="code-block"><code id="code-req">{}</code></pre>
+                </div>
+
+                <div id="panel-res" class="tab-panel" hidden role="tabpanel" aria-labelledby="tab-res">
+                    <div class="code-toolbar">
+                        <span>Response Data:</span>
+                        <button type="button" class="btn btn-sm btn-secondary copy-btn" data-target="code-res" aria-label="نسخ بيانات الاستجابة">نسخ</button>
+                    </div>
+                    <pre class="code-block"><code id="code-res">{}</code></pre>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Settings Dialog -->
+    <dialog id="settings-dialog" class="app-dialog" aria-labelledby="settings-heading">
+        <div class="dialog-content">
+            <div class="dialog-header">
+                <h2 id="settings-heading" class="dialog-title">إعدادات agy2api</h2>
+                <button type="button" id="close-settings-btn" class="btn btn-icon" aria-label="إغلاق نافذة الإعدادات">
+                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+
+            <form id="settings-form" class="settings-form" onsubmit="return false;">
+                <div class="form-group">
+                    <label for="api-key-input" class="form-label">مفتاح المصادقة (Bearer Token):</label>
+                    <input type="password" id="api-key-input" class="text-input" value="pwd" placeholder="ادخل مفتاح AGY2API_KEY (الافتراضي pwd)">
+                    <span class="form-hint">يُحفظ بأمان محلياً في متصفحك للتواصل مع السيرفر.</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="api-mode-select" class="form-label">المسار والبروتوكول:</label>
+                    <select id="api-mode-select" class="select-input">
+                        <option value="openai" selected>OpenAI Compatible (/v1/chat/completions)</option>
+                        <option value="gemini">Google Gemini (/v1beta/models/...:generateContent)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="system-prompt-input" class="form-label">تعليمات النظام (System Prompt):</label>
+                    <textarea id="system-prompt-input" class="textarea-input" rows="3" placeholder="حدد شخصية أو تعليمات المساعد هنا..."></textarea>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="stream-toggle" class="checkbox-input" checked>
+                    <label for="stream-toggle" class="checkbox-label">تفعيل البث المباشر للتوكنز (Real-time SSE Streaming)</label>
+                </div>
+
+                <div class="dialog-actions">
+                    <button type="button" id="save-settings-btn" class="btn btn-primary">حفظ الإعدادات</button>
+                    <button type="button" id="cancel-settings-btn" class="btn btn-secondary">إلغاء</button>
+                </div>
+            </form>
+        </div>
+    </dialog>
+
+    <!-- YouTube Link Modal -->
+    <dialog id="yt-dialog" class="app-dialog" aria-labelledby="yt-dialog-title">
+        <div class="dialog-content">
+            <div class="dialog-header">
+                <h2 id="yt-dialog-title" class="dialog-title">إدراج رابط يوتيوب للتحليل</h2>
+                <button type="button" id="close-yt-btn" class="btn btn-icon" aria-label="إغلاق نافذة اليوتيوب">
+                    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="form-group">
+                <label for="yt-url-input" class="form-label">رابط الفيديو (YouTube URL):</label>
+                <input type="url" id="yt-url-input" class="text-input" placeholder="https://www.youtube.com/watch?v=... أو https://youtu.be/...">
+                <span class="form-hint">سيقوم agy2api باستخراج التفريغ الصوتي أو لقطات الفيديو وتحليلها ذاتياً.</span>
+            </div>
+            <div class="dialog-actions">
+                <button type="button" id="add-yt-btn" class="btn btn-primary">إضافة الرابط</button>
+                <button type="button" id="cancel-yt-btn" class="btn btn-secondary">إلغاء</button>
+            </div>
+        </div>
+    </dialog>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
