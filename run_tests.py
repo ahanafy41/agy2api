@@ -681,6 +681,7 @@ class WebStudioEndpointTests(unittest.TestCase):
                 self.assertIn("agy2api Web Studio", res.text)
         asyncio.run(run())
 
+
     def test_ui_route_serves_html(self) -> None:
         import asyncio
         import httpx
@@ -692,6 +693,7 @@ class WebStudioEndpointTests(unittest.TestCase):
                 self.assertEqual(res.status_code, 200)
                 self.assertIn("text/html", res.headers.get("content-type", ""))
         asyncio.run(run())
+
 
     def test_static_assets_served(self) -> None:
         import asyncio
@@ -705,6 +707,15 @@ class WebStudioEndpointTests(unittest.TestCase):
                 res_js = await client.get("/static/app.js")
                 self.assertEqual(res_js.status_code, 200)
         asyncio.run(run())
+
+    def test_css_hidden_invariants(self) -> None:
+        css_path = Path(__file__).resolve().parent / "web" / "style.css"
+        self.assertTrue(css_path.exists())
+        css_content = css_path.read_text(encoding="utf-8")
+        self.assertIn("[hidden]", css_content)
+        self.assertIn("display: none !important", css_content)
+        self.assertIn("dialog:not([open])", css_content)
+
 
 
 if __name__ == "__main__":

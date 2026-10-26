@@ -30,6 +30,29 @@
     padding: 0;
 }
 
+/* Display isolation invariants: enforce hidden and closed states with highest specificity */
+[hidden] {
+    display: none !important;
+}
+
+dialog:not([open]) {
+    display: none !important;
+}
+
+.inspector-drawer[hidden] {
+    display: none !important;
+    pointer-events: none !important;
+    visibility: hidden !important;
+}
+
+.btn[hidden] {
+    display: none !important;
+}
+
+.attachments-bar[hidden] {
+    display: none !important;
+}
+
 html, body {
     height: 100%;
     background-color: var(--color-background);
