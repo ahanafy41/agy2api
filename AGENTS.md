@@ -9,6 +9,8 @@
 `agy2api` is a high-performance local API bridge that exposes the logged-in official Google Antigravity CLI (`agy`) through standard REST endpoints:
 - **OpenAI Compatible**: `POST /v1/chat/completions` (with reasoning effort, SSE streaming, and fake streaming).
 - **Google Gemini Compatible**: `POST /v1beta/models/{model}:generateContent` (for zero-config drop-in use with mobile apps, local automation scripts, and Gemini client SDKs).
+- **Web Studio & UI Playground**: `GET /` and `GET /ui` (accessible Arabic RTL web studio with model picker, reasoning effort toggle, live token counter, and multimodal upload).
+- **Static Assets**: `GET /static/*` (serves UI assets from `web/`).
 
 ### Architecture Diagram
 ```
@@ -52,6 +54,8 @@
 | `start.sh` | Linux / Termux interactive launcher with dependency and auth token checks. |
 | `stop.sh` | Clean process-group killer (`SIGTERM` / `SIGKILL`) to prevent orphaned zombie processes. |
 | `start.bat` | Windows launcher with virtual environment auto-detection. |
+| `watchdog.sh` | Health-check watchdog script for auto-restarting dead server processes. |
+| `web/` | Accessible Arabic RTL Web Studio interface (`index.html`, `app.js`, `style.css`) for prompt testing, live token streaming, and multimodal inspection. |
 | `media_cache/` | Runtime scratch folder for temporary base64 decoded images and media files (gitignored). |
 | `isolated_home/` | Sandboxed home directory for warm workers to avoid polluting user configuration (gitignored). |
 
@@ -85,7 +89,7 @@ When modifying this repository, AI agents and contributors **MUST** uphold the f
 ```bash
 python run_tests.py -v
 ```
-*Expected: 25 tests pass with 0 failures.*
+*Expected: 43 tests pass with 0 failures (1 skipped).*
 
 ### Launch Background Daemon (Termux / Linux)
 ```bash

@@ -36,6 +36,13 @@ Unlike standard CLI wrappers that invoke cold processes on every turn (incurring
 - **OpenAI Compatible**: `POST /v1/chat/completions` (supporting reasoning effort, fake streaming, and standard OpenAI SDKs).
 - **Google Gemini Compatible**: `POST /v1beta/models/{model}:generateContent` (enables Android apps and screen reader extensions to replace the official Google endpoint with zero code changes).
 
+### 5. 🎨 Accessible Web Studio UI Playground (`web/`)
+- **Zero-Dependency Web Interface**: Built-in responsive web dashboard served directly at `http://127.0.0.1:7862/` and `http://127.0.0.1:7862/ui`.
+- **Accessibility-First Design**: Full Arabic RTL layout with dedicated screen reader live announcer (`aria-live="polite"`), skip-to-content anchors, accessible form labels, and complete keyboard navigation.
+- **Dynamic Model & Thinking Selector**: Switch dynamically between Gemini 3.8 Flash (Low, Medium, High), Claude Sonnet/Opus 4.6 (Thinking), and GPT-OSS 120B with fine-grained reasoning effort control (Low, Medium, High).
+- **Real-Time Token & Latency Metrics**: Live token streaming counter, speed benchmarking (tokens/sec), and turn latency timers.
+- **Multimodal File Attachments**: Drag-and-drop or select local images, documents, and media with live previews.
+
 ---
 
 ## 📋 Prerequisites
@@ -90,6 +97,11 @@ start.bat
 
 Default URL: `http://127.0.0.1:7862`  
 Default Bearer Key: `pwd`
+
+### 0. 🎨 Web Studio (Interactive Browser Dashboard)
+Open in any browser (Chrome, Kiwi, Firefox) to chat, stream tokens, test reasoning effort, and attach files visually:
+- **URL**: `http://127.0.0.1:7862/` or `http://127.0.0.1:7862/ui`
+- **Static Assets**: `http://127.0.0.1:7862/static/` (served from `web/`)
 
 ### 1. Standard OpenAI Text Completion
 ```bash
@@ -181,7 +193,7 @@ Run the included regression and verification test suite:
 python run_tests.py -v
 ```
 
-All 25 unit tests verify Pydantic models, CLI wrappers, protocol encoders, fake-stream helpers, stateful session logic, and multimodal caching.
+All 43 unit tests verify Pydantic models, CLI wrappers, protocol encoders, fake-stream helpers, stateful session logic, multimodal caching, and Web Studio static/UI routes.
 
 ---
 

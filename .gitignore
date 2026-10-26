@@ -26,5 +26,7 @@ stateful_home/
 .vscode/
 isolated_home/
 isolated_test_home/
+isolated_workspace/
 empty_ws/
 media_cache/
+.superpowers/
