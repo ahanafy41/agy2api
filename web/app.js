@@ -6,14 +6,34 @@
 (function () {
     'use strict';
 
+    // In-memory fallback for resilient storage in restricted WebViews or private browsing
+    const memoryStore = {};
+    const safeStorage = {
+        getItem(key, fallback = null) {
+            try {
+                const val = localStorage.getItem(key);
+                return val !== null ? val : fallback;
+            } catch {
+                return key in memoryStore ? memoryStore[key] : fallback;
+            }
+        },
+        setItem(key, value) {
+            try {
+                localStorage.setItem(key, String(value));
+            } catch {
+                memoryStore[key] = String(value);
+            }
+        }
+    };
+
     // Application State
     const state = {
-        apiKey: localStorage.getItem('agy2api_key') || 'pwd',
-        apiMode: localStorage.getItem('agy2api_mode') || 'openai',
-        selectedModel: localStorage.getItem('agy2api_model') || 'gemini-3.8-flash-low',
-        effort: localStorage.getItem('agy2api_effort') || 'medium',
-        systemPrompt: localStorage.getItem('agy2api_system_prompt') || '',
-        streamEnabled: localStorage.getItem('agy2api_stream') !== 'false',
+        apiKey: safeStorage.getItem('agy2api_key', 'pwd'),
+        apiMode: safeStorage.getItem('agy2api_mode', 'openai'),
+        selectedModel: safeStorage.getItem('agy2api_model', 'gemini-3.8-flash-low'),
+        effort: safeStorage.getItem('agy2api_effort', 'medium'),
+        systemPrompt: safeStorage.getItem('agy2api_system_prompt', ''),
+        streamEnabled: safeStorage.getItem('agy2api_stream', 'true') !== 'false',
         messages: [],
         pendingAttachments: [],
         isGenerating: false,
@@ -110,7 +130,7 @@
         // Model change
         elements.modelSelect.addEventListener('change', () => {
             state.selectedModel = elements.modelSelect.value;
-            localStorage.setItem('agy2api_model', state.selectedModel);
+            safeStorage.setItem('agy2api_model', state.selectedModel);
             updateEffortVisibility();
             announce(`تم اختيار النموذج ${state.selectedModel}`);
         });
@@ -118,7 +138,7 @@
         // Effort change
         elements.effortSelect.addEventListener('change', () => {
             state.effort = elements.effortSelect.value;
-            localStorage.setItem('agy2api_effort', state.effort);
+            safeStorage.setItem('agy2api_effort', state.effort);
             announce(`تم تغيير مستوى التفكير إلى ${state.effort}`);
         });
 
@@ -136,9 +156,14 @@
         });
 
         elements.promptInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                handleSubmit();
+            if (e.key === 'Enter') {
+                if (e.isComposing) return;
+                // Desktop/External keyboard: Enter sends, Shift+Enter adds newline
+                // Ctrl+Enter or Meta+Enter also sends
+                if (e.ctrlKey || e.metaKey || !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit();
+                }
             }
         });
 
@@ -384,10 +409,10 @@
         state.systemPrompt = elements.systemPromptInput.value.trim();
         state.streamEnabled = elements.streamToggle.checked;
 
-        localStorage.setItem('agy2api_key', state.apiKey);
-        localStorage.setItem('agy2api_mode', state.apiMode);
-        localStorage.setItem('agy2api_system_prompt', state.systemPrompt);
-        localStorage.setItem('agy2api_stream', state.streamEnabled);
+        safeStorage.setItem('agy2api_key', state.apiKey);
+        safeStorage.setItem('agy2api_mode', state.apiMode);
+        safeStorage.setItem('agy2api_system_prompt', state.systemPrompt);
+        safeStorage.setItem('agy2api_stream', state.streamEnabled);
 
         elements.settingsDialog.close();
         announce('تم حفظ الإعدادات بنجاح');

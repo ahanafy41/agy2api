@@ -716,6 +716,14 @@ class WebStudioEndpointTests(unittest.TestCase):
         self.assertIn("display: none !important", css_content)
         self.assertIn("dialog:not([open])", css_content)
 
+    def test_js_client_contract(self) -> None:
+        js_path = Path(__file__).resolve().parent / "web" / "app.js"
+        self.assertTrue(js_path.exists())
+        js_content = js_path.read_text(encoding="utf-8")
+        self.assertIn("safeStorage", js_content)
+        self.assertIn("shiftKey", js_content)
+
+
 
 
 if __name__ == "__main__":
