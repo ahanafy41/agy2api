@@ -542,7 +542,7 @@
 
         if (!res.ok) {
             const errJson = await res.json().catch(() => ({}));
-            const errMsg = (errJson.error && errJson.error.message) || `HTTP ${res.status}: ${res.statusText}`;
+            const errMsg = (errJson.error && errJson.error.message) || (errJson.error && typeof errJson.error === 'string' ? errJson.error : null) || errJson.detail || `HTTP ${res.status}: ${res.statusText}`;
             throw new Error(errMsg);
         }
 
@@ -612,6 +612,9 @@
             if (choice && choice.message) {
                 fullAnswer = choice.message.content || '';
                 fullReasoning = choice.message.reasoning_content || '';
+            } else if (json.candidates && json.candidates[0] && json.candidates[0].content) {
+                const parts = json.candidates[0].content.parts || [];
+                fullAnswer = parts.map(p => p.text || '').join('');
             }
             if (json.usage && json.usage.total_tokens) {
                 tokenCount = json.usage.total_tokens;

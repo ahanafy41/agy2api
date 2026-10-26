@@ -723,6 +723,14 @@ class WebStudioEndpointTests(unittest.TestCase):
         self.assertIn("safeStorage", js_content)
         self.assertIn("shiftKey", js_content)
 
+    def test_js_dual_mode_decoder(self) -> None:
+        js_path = Path(__file__).resolve().parent / "web" / "app.js"
+        self.assertTrue(js_path.exists())
+        js_content = js_path.read_text(encoding="utf-8")
+        self.assertIn("candidates", js_content)
+        self.assertIn("parts", js_content)
+
+
 
 
 
