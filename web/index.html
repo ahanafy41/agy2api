@@ -19,7 +19,7 @@
             <div class="header-brand">
                 <div class="brand-title-group">
                     <h1 class="brand-title">agy2api Web Studio</h1>
-                    <span class="brand-sub">بوابة الذكاء الاصطناعي المحلية</span>
+                    <span class="brand-sub">استوديو النماذج المحلي</span>
                 </div>
                 <div class="server-status" id="server-status" role="status" aria-label="حالة الاتصال بالسيرفر">
                     <span class="status-dot status-offline" id="status-dot"></span>
@@ -70,15 +70,9 @@
             <section class="chat-viewport" aria-label="سجل المحادثة">
                 <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-relevant="additions text">
                     <!-- Welcome Card -->
-                    <article class="welcome-card" aria-label="رسالة ترحيب ومعلومات الاستخدام">
-                        <h2>مرحباً بك في agy2api Web Studio</h2>
-                        <p>استمتع بتجربة كامل قدرات الـ API محلياً بسرعة وأمان:</p>
-                        <ul class="feature-list">
-                            <li><strong>دعم الموديلات المتقدمة:</strong> Gemini 3.8 Flash و Claude 4.6 و GPT-OSS مع مستويات التفكير.</li>
-                            <li><strong>بث مباشر Real-time Streaming:</strong> عرض التوكنز وخطوات التفكير لحظة بلحظة.</li>
-                            <li><strong>متعدد الوسائط (Multimodal):</strong> أرفق صور، ملفات صوتية، مستندات PDF، أو روابط يوتيوب.</li>
-                            <li><strong>لوحة المطورين:</strong> فحص أوامر cURL واستجابات JSON واستهلاك التوكنز والوقت.</li>
-                        </ul>
+                    <article class="welcome-card" aria-label="رسالة ترحيب">
+                        <h2>agy2api Web Studio</h2>
+                        <p>اكتب رسالتك مباشرة في الحقل بالأسفل، أو اختر النموذج ومستوى التفكير من الشريط العلوي.</p>
                     </article>
                 </div>
             </section>
@@ -103,7 +97,7 @@
                     </div>
 
                     <div class="textarea-wrapper">
-                        <textarea id="prompt-input" class="prompt-textarea" rows="1" placeholder="اكتب استفسارك أو طلبك هنا... (Ctrl+Enter للإرسال)" aria-label="اكتب رسالتك"></textarea>
+                        <textarea id="prompt-input" class="prompt-textarea" rows="1" placeholder="اكتب رسالتك هنا... (Ctrl+Enter للإرسال)" aria-label="اكتب رسالتك"></textarea>
                     </div>
 
                     <div class="input-controls-right">
@@ -123,7 +117,7 @@
         <!-- Developer Inspector Drawer -->
         <aside id="inspector-drawer" class="inspector-drawer" hidden aria-labelledby="inspector-heading" aria-modal="false">
             <div class="drawer-header">
-                <h2 id="inspector-heading" class="drawer-title">فحص الـ API للمطورين</h2>
+                <h2 id="inspector-heading" class="drawer-title">فحص الـ API</h2>
                 <button type="button" id="close-inspector-btn" class="btn btn-icon" aria-label="إغلاق لوحة الفحص">
                     <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
@@ -156,15 +150,15 @@
             <div class="tab-panels">
                 <div id="panel-curl" class="tab-panel active" role="tabpanel" aria-labelledby="tab-curl">
                     <div class="code-toolbar">
-                        <span>Terminal cURL command:</span>
+                        <span>أمر cURL:</span>
                         <button type="button" class="btn btn-sm btn-secondary copy-btn" data-target="code-curl" aria-label="نسخ أمر cURL">نسخ</button>
                     </div>
-                    <pre class="code-block"><code id="code-curl"># سيظهر أمر cURL هنا بعد إرسال أول طلب</code></pre>
+                    <pre class="code-block"><code id="code-curl"># يظهر أمر cURL هنا عند إرسال أول طلب</code></pre>
                 </div>
 
                 <div id="panel-req" class="tab-panel" hidden role="tabpanel" aria-labelledby="tab-req">
                     <div class="code-toolbar">
-                        <span>Request Payload:</span>
+                        <span>بيانات الطلب:</span>
                         <button type="button" class="btn btn-sm btn-secondary copy-btn" data-target="code-req" aria-label="نسخ بيانات الطلب">نسخ</button>
                     </div>
                     <pre class="code-block"><code id="code-req">{}</code></pre>
@@ -172,7 +166,7 @@
 
                 <div id="panel-res" class="tab-panel" hidden role="tabpanel" aria-labelledby="tab-res">
                     <div class="code-toolbar">
-                        <span>Response Data:</span>
+                        <span>بيانات الاستجابة:</span>
                         <button type="button" class="btn btn-sm btn-secondary copy-btn" data-target="code-res" aria-label="نسخ بيانات الاستجابة">نسخ</button>
                     </div>
                     <pre class="code-block"><code id="code-res">{}</code></pre>
@@ -195,7 +189,7 @@
                 <div class="form-group">
                     <label for="api-key-input" class="form-label">مفتاح المصادقة (Bearer Token):</label>
                     <input type="password" id="api-key-input" class="text-input" value="pwd" placeholder="ادخل مفتاح AGY2API_KEY (الافتراضي pwd)">
-                    <span class="form-hint">يُحفظ بأمان محلياً في متصفحك للتواصل مع السيرفر.</span>
+                    <span class="form-hint">يُحفظ محلياً في المتصفح.</span>
                 </div>
 
                 <div class="form-group">
@@ -208,12 +202,12 @@
 
                 <div class="form-group">
                     <label for="system-prompt-input" class="form-label">تعليمات النظام (System Prompt):</label>
-                    <textarea id="system-prompt-input" class="textarea-input" rows="3" placeholder="حدد شخصية أو تعليمات المساعد هنا..."></textarea>
+                    <textarea id="system-prompt-input" class="textarea-input" rows="3" placeholder="سياق أو تعليمات إضافية للمساعد..."></textarea>
                 </div>
 
                 <div class="form-group checkbox-group">
                     <input type="checkbox" id="stream-toggle" class="checkbox-input" checked>
-                    <label for="stream-toggle" class="checkbox-label">تفعيل البث المباشر للتوكنز (Real-time SSE Streaming)</label>
+                    <label for="stream-toggle" class="checkbox-label">بث مباشر للردود (Streaming)</label>
                 </div>
 
                 <div class="dialog-actions">
@@ -236,7 +230,7 @@
             <div class="form-group">
                 <label for="yt-url-input" class="form-label">رابط الفيديو (YouTube URL):</label>
                 <input type="url" id="yt-url-input" class="text-input" placeholder="https://www.youtube.com/watch?v=... أو https://youtu.be/...">
-                <span class="form-hint">سيقوم agy2api باستخراج التفريغ الصوتي أو لقطات الفيديو وتحليلها ذاتياً.</span>
+                <span class="form-hint">استخراج فوري للنص الصوتي أو محتوى الفيديو.</span>
             </div>
             <div class="dialog-actions">
                 <button type="button" id="add-yt-btn" class="btn btn-primary">إضافة الرابط</button>

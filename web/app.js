@@ -144,7 +144,7 @@
 
         // New Chat
         elements.newChatBtn.addEventListener('click', () => {
-            if (state.messages.length > 0 && confirm('هل تريد بدء محادثة جديدة وتفريغ السجل؟')) {
+            if (state.messages.length > 0 && confirm('بدء محادثة جديدة ومسح الرسائل؟')) {
                 resetChat();
             }
         });
@@ -177,7 +177,7 @@
         elements.stopBtn.addEventListener('click', () => {
             if (state.abortController) {
                 state.abortController.abort();
-                announce('تم إيقاف التوليد');
+                announce('تم الإيقاف');
             }
         });
 
@@ -244,7 +244,7 @@
                             btn.textContent = originalText;
                             btn.style.color = '';
                         }, 2000);
-                        announce('تم نسخ المحتوى إلى الحافظة');
+                        announce('تم النسخ');
                     });
                 }
             });
@@ -266,12 +266,12 @@
         state.pendingAttachments = [];
         renderAttachments();
         elements.chatMessages.innerHTML = `
-            <article class="welcome-card" aria-label="رسالة ترحيب ومعلومات الاستخدام">
-                <h2>مرحباً بك في agy2api Web Studio</h2>
-                <p>تم بدء جلسة محادثة جديدة. يمكنك إرسال استفسارك أو إرفاق وسائط الآن.</p>
+            <article class="welcome-card" aria-label="رسالة ترحيب">
+                <h2>agy2api Web Studio</h2>
+                <p>اكتب رسالتك مباشرة في الحقل بالأسفل، أو اختر النموذج ومستوى التفكير من الشريط العلوي.</p>
             </article>
         `;
-        announce('تم تفريغ المحادثة والبدء من جديد');
+        announce('تم مسح المحادثة');
     }
 
     /** Check server connection health */
@@ -324,10 +324,10 @@
         elements.toggleInspectorBtn.setAttribute('aria-expanded', String(isOpen));
         if (isOpen) {
             elements.inspectorDrawer.focus();
-            announce('تم فتح لوحة فحص الـ API للمطورين');
+            announce('تم فتح لوحة الفحص');
         } else {
             elements.toggleInspectorBtn.focus();
-            announce('تم إغلاق لوحة فحص الـ API');
+            announce('تم إغلاق لوحة الفحص');
         }
     }
 
@@ -372,7 +372,7 @@
 
         renderAttachments();
         elements.ytDialog.close();
-        announce('تم إرفاق رابط اليوتيوب بنجاح');
+        announce('تم إرفاق الرابط');
     }
 
     /** Render attachment preview chips */
@@ -415,7 +415,7 @@
         safeStorage.setItem('agy2api_stream', state.streamEnabled);
 
         elements.settingsDialog.close();
-        announce('تم حفظ الإعدادات بنجاح');
+        announce('تم حفظ الإعدادات');
         fetchModels();
     }
 
@@ -446,7 +446,7 @@
         elements.sendBtn.hidden = true;
         elements.stopBtn.hidden = false;
         elements.stopBtn.focus();
-        announce('جاري إرسال الطلب واستلام الرد...');
+        announce('جاري الإرسال...');
 
         state.abortController = new AbortController();
         const startTime = performance.now();
@@ -455,8 +455,8 @@
             await executeChatRequest(assistantMsgEl, startTime);
         } catch (err) {
             if (err.name === 'AbortError') {
-                assistantMsgEl.querySelector('.message-text').innerHTML += '<p class="text-muted"><em>(تم إيقاف التوليد من المستخدم)</em></p>';
-                announce('تم إيقاف التوليد');
+                assistantMsgEl.querySelector('.message-text').innerHTML += '<p class="text-muted"><em>(تم الإيقاف)</em></p>';
+                announce('تم الإيقاف');
             } else {
                 console.error('Chat request error:', err);
                 assistantMsgEl.querySelector('.message-text').innerHTML = `<p style="color: var(--color-danger);">خطأ: ${escapeHtml(err.message)}</p>`;
@@ -635,7 +635,7 @@
 
         // Save assistant reply to state
         state.messages.push({ role: 'assistant', content: fullAnswer, reasoning: fullReasoning });
-        announce('اكتمل توليد الرد بنجاح');
+        announce('اكتمل الرد');
         scrollChatToBottom();
     }
 
