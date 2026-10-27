@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 
@@ -46,7 +47,7 @@ class Plan:
 
 class SessionStore:
     def __init__(self, max_sessions: int = 200) -> None:
-        self._sessions: dict[str, _Session] = {}
+        self._sessions: OrderedDict[str, _Session] = OrderedDict()
         # Clamp to >=1 so a misconfigured AGY2API_MAX_SESSIONS (0/negative) can't
         # make _evict delete every session (including the one just added).
         self._max = max(1, max_sessions)
@@ -63,6 +64,7 @@ class SessionStore:
         if best is None:
             return Plan(conversation_id=None, prefix_len=0)
         best.last_used = time.time()
+        self._sessions.move_to_end(best.conversation_id)
         return Plan(conversation_id=best.conversation_id, prefix_len=len(best.sigs))
 
     def remember(
@@ -73,6 +75,7 @@ class SessionStore:
         `protected` ids are never evicted (e.g. conversations currently in
         flight in other requests)."""
         self._sessions[conversation_id] = _Session(conversation_id, list(sigs))
+        self._sessions.move_to_end(conversation_id)
         return self._evict(protected or set())
 
     def forget(self, conversation_id: str) -> None:
@@ -84,13 +87,14 @@ class SessionStore:
 
     def _evict(self, protected: set[str]) -> list[str]:
         evicted: list[str] = []
-        while len(self._sessions) > self._max:
-            candidates = [
-                s for s in self._sessions.values() if s.conversation_id not in protected
-            ]
-            if not candidates:
-                break  # everything left is in use; don't evict a live session
-            oldest = min(candidates, key=lambda s: s.last_used)
-            self._sessions.pop(oldest.conversation_id, None)
-            evicted.append(oldest.conversation_id)
+        if len(self._sessions) <= self._max:
+            return evicted
+
+        # OrderedDict maintains insertion/access order; oldest entries are at the front
+        for cid in list(self._sessions.keys()):
+            if len(self._sessions) <= self._max:
+                break
+            if cid not in protected:
+                self._sessions.pop(cid, None)
+                evicted.append(cid)
         return evicted

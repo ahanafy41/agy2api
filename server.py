@@ -78,6 +78,7 @@ _session_store = SessionStore(settings.max_sessions) if settings.stateful else N
 _conv_locks: dict[str, asyncio.Lock] = {}
 # Conversations currently being run (resumed). Eviction must not delete these.
 _in_flight: set[str] = set()
+_last_media_cleanup: float = 0.0
 
 
 def _cleanup_old_media_cache(max_age_seconds: int = 7200) -> None:
@@ -89,6 +90,15 @@ def _cleanup_old_media_cache(max_age_seconds: int = 7200) -> None:
                 f.unlink(missing_ok=True)
     except Exception as exc:
         logger.debug("media_cache cleanup error: %s", exc)
+
+
+def _maybe_cleanup_media_cache() -> None:
+    """Throttled media cache cleanup called during saves (at most once per 60s)."""
+    global _last_media_cleanup
+    now = time.time()
+    if (now - _last_media_cleanup) >= 60.0:
+        _last_media_cleanup = now
+        _cleanup_old_media_cache()
 
 
 def run_janitor_sweep(max_age_seconds: int = 3600) -> dict[str, int]:
@@ -543,10 +553,50 @@ async def gemini_models():
     return JSONResponse(content={"models": models_list})
 
 
+_MIME_TO_EXT: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "application/pdf": ".pdf",
+    "video/mp4": ".mp4",
+    "audio/mp3": ".mp3",
+    "audio/mpeg": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/m4a": ".m4a",
+    "audio/x-m4a": ".m4a",
+    "video/webm": ".webm",
+    "video/x-matroska": ".mkv",
+}
+
+
+def _extension_for_mime(mime_type: str) -> str:
+    """Fast O(1) extension resolver for common MIME types with fallback."""
+    mime_lower = mime_type.lower().strip()
+    if mime_lower in _MIME_TO_EXT:
+        return _MIME_TO_EXT[mime_lower]
+    for ext_key, ext_val in (
+        ("png", ".png"),
+        ("webp", ".webp"),
+        ("gif", ".gif"),
+        ("pdf", ".pdf"),
+        ("mp4", ".mp4"),
+        ("mp3", ".mp3"),
+        ("mpeg", ".mp3"),
+        ("wav", ".wav"),
+        ("m4a", ".m4a"),
+    ):
+        if ext_key in mime_lower:
+            return ext_val
+    return ".jpg"
+
+
 def _save_base64_media(b64_data: str, mime_type: str = "image/jpeg") -> Path | None:
     """Decodes a base64 media string (raw or data URI) and persists it to media_cache."""
     try:
-        _cleanup_old_media_cache()
+        _maybe_cleanup_media_cache()
         if b64_data.startswith("data:"):
             header, _, encoded = b64_data.partition(",")
             if ";" in header:
@@ -555,25 +605,7 @@ def _save_base64_media(b64_data: str, mime_type: str = "image/jpeg") -> Path | N
                     mime_type = mime_part
             b64_data = encoded
 
-        ext = ".jpg"
-        mime_lower = mime_type.lower()
-        if "png" in mime_lower:
-            ext = ".png"
-        elif "webp" in mime_lower:
-            ext = ".webp"
-        elif "gif" in mime_lower:
-            ext = ".gif"
-        elif "pdf" in mime_lower:
-            ext = ".pdf"
-        elif "mp4" in mime_lower:
-            ext = ".mp4"
-        elif "mp3" in mime_lower or "mpeg" in mime_lower:
-            ext = ".mp3"
-        elif "wav" in mime_lower:
-            ext = ".wav"
-        elif "m4a" in mime_lower:
-            ext = ".m4a"
-
+        ext = _extension_for_mime(mime_type)
         raw_bytes = base64.b64decode(b64_data)
         fname = f"media_{int(time.time() * 1000)}_{os.urandom(4).hex()}{ext}"
         fpath = MEDIA_CACHE_DIR / fname
@@ -589,33 +621,31 @@ def _save_base64_media(b64_data: str, mime_type: str = "image/jpeg") -> Path | N
         return None
 
 
-@app.post("/v1beta/models/{model_action:path}")
-async def gemini_generate_content(model_action: str, request: Request):
-    """Google Gemini API compatibility: Generate content with full multimodal support."""
-    clean_action = model_action.split("?")[0]
-    model_id = clean_action.split(":")[0].replace("models/", "")
-    resolved_model, agy_effort = resolve_model(model_id)
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
+async def _extract_gemini_multimodal_prompt(body: dict[str, Any]) -> tuple[str, list[Path]]:
+    """Extracts system instructions, text, inline media, and file references from Gemini request body."""
     prompt_parts: list[str] = []
     ephemeral_files: list[Path] = []
+
     if "system_instruction" in body:
         sys_parts = body["system_instruction"].get("parts", [])
         for sp in sys_parts:
             if "text" in sp:
                 prompt_parts.append(f"System: {sp['text']}")
 
-    # Extract overall user text context for YouTube analysis
+    # Pre-extract overall user context and file URIs in single passes
     user_context = " ".join([
         p["text"]
         for c in body.get("contents", [])
         for p in c.get("parts", [])
         if isinstance(p, dict) and "text" in p
     ]).strip()
+
+    file_uris = {
+        str(p.get("file_data", {}).get("file_uri", "") or p.get("fileData", {}).get("fileUri", ""))
+        for c in body.get("contents", [])
+        for p in c.get("parts", [])
+        if isinstance(p, dict) and ("file_data" in p or "fileData" in p)
+    }
 
     has_image = False
     for content in body.get("contents", []):
@@ -624,11 +654,7 @@ async def gemini_generate_content(model_action: str, request: Request):
                 t_val = part["text"]
                 prompt_parts.append(t_val)
                 yt_urls = extract_youtube_urls(t_val)
-                has_file_data_yt = any(
-                    isinstance(p, dict) and "file_data" in p and any(u in str(p.get("file_data", {}).get("file_uri", "")) for u in yt_urls)
-                    for c in body.get("contents", [])
-                    for p in c.get("parts", [])
-                )
+                has_file_data_yt = any(any(u in f_uri for u in yt_urls) for f_uri in file_uris)
                 if yt_urls and not has_file_data_yt:
                     for y_url in yt_urls:
                         yt_prompt, yt_file = await asyncio.to_thread(
@@ -717,9 +743,22 @@ async def gemini_generate_content(model_action: str, request: Request):
             "Text: <اكتب هنا كل النصوص المستخرجة بالحرف، أو لا يوجد نص>"
         )
 
-    if not full_prompt:
-        full_prompt = "Hello"
+    return (full_prompt or "Hello"), ephemeral_files
 
+
+@app.post("/v1beta/models/{model_action:path}")
+async def gemini_generate_content(model_action: str, request: Request):
+    """Google Gemini API compatibility: Generate content with full multimodal support."""
+    clean_action = model_action.split("?")[0]
+    model_id = clean_action.split(":")[0].replace("models/", "")
+    resolved_model, agy_effort = resolve_model(model_id)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    full_prompt, ephemeral_files = await _extract_gemini_multimodal_prompt(body)
     logger.info("gemini-compat: model=%s (resolved=%s) prompt_chars=%d", model_id, resolved_model, len(full_prompt))
 
     try:
@@ -789,77 +828,78 @@ async def _stream_response(
     cid_str = completion_id()
     created_ts = int(started)
 
-    # Real-time token streaming via persistent stream-json worker
-    can_use_worker = settings.fast_session and (not resume_id or (worker.is_alive() and worker.cid == resume_id))
-    if can_use_worker:
-        try:
-            yield sse_event(make_role_chunk(cid_str, created_ts, model))
-            worker_cid = None
-            final_answer = ""
-            final_reasoning = ""
-            usage = {}
-
-            async for chunk in worker.run_turn_stream(prompt, model=agy_model or "gemini-3.8-flash-low", effort=effort):
-                if await request.is_disconnected():
-                    logger.warning("client disconnected during real-time stream after %.1fs", time.time() - started)
-                    return
-                c_type = chunk.get("type")
-                if c_type == "delta":
-                    d_text = chunk.get("delta", "")
-                    if d_text:
-                        yield sse_event(make_delta_chunk(cid_str, created_ts, model, d_text))
-                elif c_type == "done":
-                    worker_cid = chunk.get("cid")
-                    final_answer = chunk.get("response", "")
-                    final_reasoning = chunk.get("reasoning", "")
-                    usage = chunk.get("usage", {})
-
-            if worker_cid and sigs:
-                _record_session(worker_cid, sigs)
-
-            yield sse_event(make_finish_chunk(cid_str, created_ts, model, finish_reason="stop", usage=usage if usage else None))
-            yield sse_event("[DONE]")
-            logger.info(
-                "ok (real-time stream): model=%s answer_chars=%d cid=%s in %.2fs",
-                model, len(final_answer), worker_cid, time.time() - started,
-            )
-            return
-        except Exception as exc:
-            logger.warning("Real-time stream failed (%s), falling back to guarded run: %s", type(exc).__name__, exc)
-
-    task = asyncio.create_task(_execute_run(prompt, agy_model, resume_id, keep, effort))
     try:
-        while not task.done():
-            if await request.is_disconnected():
-                logger.warning(
-                    "client disconnected after %.1fs; agy run continues in background "
-                    "until it finishes (cannot be interrupted mid-print)",
-                    time.time() - started,
-                )
-                task.cancel()
-                return
-            yield sse_event(make_heartbeat(model))
-            await asyncio.sleep(1)
+        # Real-time token streaming via persistent stream-json worker
+        can_use_worker = settings.fast_session and (not resume_id or (worker.is_alive() and worker.cid == resume_id))
+        if can_use_worker:
+            try:
+                yield sse_event(make_role_chunk(cid_str, created_ts, model))
+                worker_cid = None
+                final_answer = ""
+                final_reasoning = ""
+                usage = {}
 
-        result = await task
-        if sigs:
-            _record_session(Path(result.db_path).stem, sigs)
-        fr = "length" if result.response.truncated else "stop"
-        logger.info(
-            "ok (stream): model=%s answer_chars=%d reasoning_chars=%d truncated=%s db=%s resume=%s %.1fs",
-            model, len(result.response.answer), len(result.response.reasoning),
-            result.response.truncated, result.db_path.name, bool(resume_id), time.time() - started,
-        )
-        async for item in stream_chunks(result.response.answer, result.response.reasoning, model, finish_reason=fr):
-            yield item
-    except Exception as exc:
-        _forget_session(resume_id)
-        logger.error(
-            "FAILED (stream): model=%s prompt_chars=%d after %.1fs -> %s",
-            model, len(prompt), time.time() - started, exc, exc_info=True,
-        )
-        yield sse_event({"error": {"message": str(exc), "type": "agy_error"}})
-        yield sse_event("[DONE]")
+                async for chunk in worker.run_turn_stream(prompt, model=agy_model or "gemini-3.8-flash-low", effort=effort):
+                    if await request.is_disconnected():
+                        logger.warning("client disconnected during real-time stream after %.1fs", time.time() - started)
+                        return
+                    c_type = chunk.get("type")
+                    if c_type == "delta":
+                        d_text = chunk.get("delta", "")
+                        if d_text:
+                            yield sse_event(make_delta_chunk(cid_str, created_ts, model, d_text))
+                    elif c_type == "done":
+                        worker_cid = chunk.get("cid")
+                        final_answer = chunk.get("response", "")
+                        final_reasoning = chunk.get("reasoning", "")
+                        usage = chunk.get("usage", {})
+
+                if worker_cid and sigs:
+                    _record_session(worker_cid, sigs)
+
+                yield sse_event(make_finish_chunk(cid_str, created_ts, model, finish_reason="stop", usage=usage if usage else None))
+                yield sse_event("[DONE]")
+                logger.info(
+                    "ok (real-time stream): model=%s answer_chars=%d cid=%s in %.2fs",
+                    model, len(final_answer), worker_cid, time.time() - started,
+                )
+                return
+            except Exception as exc:
+                logger.warning("Real-time stream failed (%s), falling back to guarded run: %s", type(exc).__name__, exc)
+
+        task = asyncio.create_task(_execute_run(prompt, agy_model, resume_id, keep, effort))
+        try:
+            while not task.done():
+                if await request.is_disconnected():
+                    logger.warning(
+                        "client disconnected after %.1fs; agy run continues in background "
+                        "until it finishes (cannot be interrupted mid-print)",
+                        time.time() - started,
+                    )
+                    task.cancel()
+                    return
+                yield sse_event(make_heartbeat(model))
+                await asyncio.sleep(1)
+
+            result = await task
+            if sigs:
+                _record_session(Path(result.db_path).stem, sigs)
+            fr = "length" if result.response.truncated else "stop"
+            logger.info(
+                "ok (stream): model=%s answer_chars=%d reasoning_chars=%d truncated=%s db=%s resume=%s %.1fs",
+                model, len(result.response.answer), len(result.response.reasoning),
+                result.response.truncated, result.db_path.name, bool(resume_id), time.time() - started,
+            )
+            async for item in stream_chunks(result.response.answer, result.response.reasoning, model, finish_reason=fr):
+                yield item
+        except Exception as exc:
+            _forget_session(resume_id)
+            logger.error(
+                "FAILED (stream): model=%s prompt_chars=%d after %.1fs -> %s",
+                model, len(prompt), time.time() - started, exc, exc_info=True,
+            )
+            yield sse_event({"error": {"message": str(exc), "type": "agy_error"}})
+            yield sse_event("[DONE]")
     finally:
         if cleanup_files:
             for f in set(cleanup_files):

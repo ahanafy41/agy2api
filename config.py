@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,8 @@ MODEL_ALIASES: dict[str, str] = {
     "gpt-oss-120b-medium": "gpt-oss-120b",
 }
 
+_EFFORT_SUFFIX_RE = re.compile(r"-(low|medium|high)$", re.IGNORECASE)
+
 
 def resolve_model(
     model: str | None, effort: str | None = None
@@ -95,9 +98,7 @@ def resolve_model(
 
     effort_str = (effort or "").lower().strip()
     if effort_str:
-        import re
-
-        base_id = re.sub(r"-(low|medium|high)$", "", canonical)
+        base_id = _EFFORT_SUFFIX_RE.sub("", canonical)
         candidate_id = f"{base_id}-{effort_str}"
         if candidate_id in MODEL_MAP:
             return MODEL_MAP[candidate_id], None

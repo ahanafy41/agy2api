@@ -206,6 +206,36 @@ class ConversationDatabaseReaderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             read_response(self.db_path)
 
+    def test_completed_model_step_with_tool_summaries(self) -> None:
+        """Completed model steps must also include detected tool summaries."""
+        tool_payload = _encode_field(1, 2, "view_file: test_script.py".encode("utf-8"))
+        f1 = _encode_field(1, 2, "File read successfully".encode("utf-8"))
+        model_payload = _encode_field(20, 2, f1)
+
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO steps VALUES (1, 8, 3, ?)", (tool_payload,))
+        conn.execute("INSERT INTO steps VALUES (2, 15, 3, ?)", (model_payload,))
+        conn.commit()
+        conn.close()
+
+        result = read_response(self.db_path)
+        self.assertEqual(result.answer, "File read successfully")
+        self.assertIn("view_file: test_script.py", result.tool_summaries)
+
+    def test_incomplete_model_step_returns_truncated(self) -> None:
+        """Degraded read of non-DONE model steps must mark response as truncated."""
+        f1 = _encode_field(1, 2, "Partial unfinalized response".encode("utf-8"))
+        model_payload = _encode_field(20, 2, f1)
+
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("INSERT INTO steps VALUES (1, 15, 1, ?)", (model_payload,))
+        conn.commit()
+        conn.close()
+
+        result = read_response(self.db_path)
+        self.assertEqual(result.answer, "Partial unfinalized response")
+        self.assertTrue(result.truncated)
+
 
 class SessionStoreTests(unittest.TestCase):
     """Test stateful session store prefix matching and eviction."""

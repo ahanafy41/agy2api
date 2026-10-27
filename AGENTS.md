@@ -89,7 +89,7 @@ When modifying this repository, AI agents and contributors **MUST** uphold the f
 ```bash
 python run_tests.py -v
 ```
-*Expected: 43 tests pass with 0 failures (1 skipped).*
+*Expected: 45 tests pass with 0 failures (1 skipped).*
 
 ### Launch Background Daemon (Termux / Linux)
 ```bash
